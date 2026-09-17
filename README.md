@@ -45,9 +45,11 @@ locally or copy `dist/` to any host that serves plain `http://` (on a custom Pag
 "Enforce HTTPS"). Markdown links in the docs are rewritten onto the base path by a small rehype
 plugin in the config, so keep them root-absolute (`/docs/...`).
 
-Browsers are also tightening rules for public pages talking to private networks. Serving the page
-from the Music Assistant host itself, or over WebRTC through the MA API as MA's own frontend does,
-avoids both issues; see the Sendspin integration doc.
+Chrome also gates any public page talking to a private network address (Local Network Access:
+a permission prompt, or `ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS` when it cannot prompt). A copy
+served from a LAN address avoids both rules; serving from the Music Assistant host itself, or over
+WebRTC through the MA API as MA's own frontend does, is the long-term answer. See the Sendspin
+integration doc.
 
 ## Layout
 

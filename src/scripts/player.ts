@@ -303,6 +303,9 @@ async function connect(): Promise<void> {
     const blocked = location.protocol === 'https:' ? ' (an HTTPS page cannot reach a ws:// server; serve the site over http://)' : '';
     el.status.textContent = `failed: ${(e as Error)?.message ?? e}${blocked}`;
     console.error(e);
+    // stop the client's own reconnect loop; a failed first connect otherwise keeps retrying and
+    // its callbacks keep mutating our state after we have let go of it
+    player?.disconnect('user_request');
     player = null;
   }
 }

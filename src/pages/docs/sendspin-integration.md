@@ -29,8 +29,11 @@ Spec: https://github.com/Sendspin/spec. Relevant parts: `messaging.md` (handshak
   authenticated MA API (`sendspin/ice_servers`, `sendspin/connect`, `sendspin/ice`), then hands the
   DataChannel to sendspin-js as a bring-your-own transport. That works from any origin and from
   outside the LAN, at the cost of implementing the MA login.
-- Chrome's Private Network Access rules may prompt or block a public page connecting to a private
-  address; test on current browsers when hosting publicly.
+- Chrome's Local Network Access rules apply to any *public* page connecting to a private address,
+  http or https: headless Chrome fails with `net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS`, a
+  normal window shows a permission prompt the user must accept. The GitHub Pages copy hits both
+  this and the mixed-content rule. A page served from a LAN address (`npm run dev`, or `dist/` on a
+  LAN host) is not public and connects without prompts.
 - The connection needs a user gesture (click) before audio can start.
 
 ## Roles used
