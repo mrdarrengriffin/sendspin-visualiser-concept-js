@@ -61,9 +61,13 @@ const AGREE_PHASE = 0.2;       // beat within 20% of a period from the grid coun
 // Pull rates and replacement thresholds scale with the lock's confidence c (0..1):
 const pullPeriod = (c: number) => 0.1 + 0.3 * (1 - c);   // 0.4 when unsure, 0.1 when sure
 const pullPhase = (c: number) => 0.2 + 0.4 * (1 - c);    // 0.6 when unsure, 0.2 when sure
-const RELOCK_BEATS = 8;                                   // a replacement needs this many steady beats ...
-const relockSpanUs = (c: number) => 3_000_000 * (1 + 2 * c);   // ... over 3 s (unsure) to 9 s (sure)
-const CONF_GAIN = 0.06, CONF_LOSS = 0.92;                 // per agreeing / dissenting beat
+const RELOCK_BEATS = 8;                                   // a replacement needs at least this many steady beats ...
+const relockSpanUs = (c: number) => 3_000_000 * (1 + 2 * c);   // ... spanning 3 s (unsure) to 9 s (sure)
+const CANDIDATE_MAX = 64;                                 // dissenting beats remembered for that
+const CONF_GAIN = 0.06;                                   // per agreeing beat
+// Loss per dissenting beat also scales with confidence: a lock built on many steady beats gives
+// its trust up slowly (x0.98, ~35 dissents to halve), a fresh one quickly (x0.92, ~8 to halve).
+const confLoss = (c: number) => 0.92 + 0.06 * c;
 const FLYWHEEL_SHORT_MS = 30000;
 
 export class BeatClock {
@@ -170,18 +174,18 @@ export class BeatClock {
 
     // out of step: keep the lock, coast, and see whether the dissenting beats form a stable tempo
     lock.dissent++;
-    lock.confidence *= CONF_LOSS;
+    lock.confidence *= confLoss(lock.confidence);
+    // The candidate keeps the dissenting beats of the last needSpan (plus a little slack), so a
+    // rival tempo has to stay steady for the whole span, not just for eight beats.
+    const needSpan = relockSpanUs(lock.confidence);
     this.candidate.push(ts);
-    if (this.candidate.length > RELOCK_BEATS) this.candidate.shift();
+    while (this.candidate.length > CANDIDATE_MAX || ts - this.candidate[0] > needSpan + 2 * lock.periodUs) this.candidate.shift();
     this.log('dissent', { phaseErrMs: Math.round(e / 1000), estBpm: est ? +(60e6 / est.periodUs).toFixed(1) : null, candidate: this.candidate.length });
     if (this.candidate.length < RELOCK_BEATS) return;
     const gaps = this.candidate.slice(1).map((t, i) => t - this.candidate[i]);
     const med = [...gaps].sort((a, b) => a - b)[gaps.length >> 1];
     const steady = gaps.every((g) => Math.abs(g / med - 1) < 0.1) && med >= PERIOD_MIN && med <= PERIOD_MAX;
     const span = this.candidate[this.candidate.length - 1] - this.candidate[0];
-    const ratio = med / lock.periodUs;
-    const octave = Math.abs(ratio - 2) < 0.15 || Math.abs(ratio - 0.5) < 0.08;
-    const needSpan = relockSpanUs(lock.confidence) * (octave ? 2 : 1);
     if (steady && span >= needSpan) {
       const P = gaps.reduce((a, b) => a + b, 0) / gaps.length;
       this.relocks++;
@@ -249,7 +253,7 @@ export class BeatClock {
         return;
       }
       lock.dissent++;
-      lock.confidence *= CONF_LOSS;
+      lock.confidence *= confLoss(lock.confidence);
       // a replacement needs consecutive agreeing estimates: two when the lock is unsure, four when
       // it is sure
       this.onsetVotes.push({ P: est.P, next: est.next, t: nowS, score: est.score });

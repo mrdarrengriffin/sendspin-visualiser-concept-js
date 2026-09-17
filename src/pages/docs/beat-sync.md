@@ -60,14 +60,17 @@ the old spacing (one traversal of settle). This is deliberate; re-timing visible
 The clock is **sticky**. It holds one lock, `{ period, anchor, source, confidence }`, and treats
 every new piece of evidence as a claim to be tested against that lock rather than as a new answer.
 
-**Confidence** (0..1) is earned: +0.06 per agreeing beat, ×0.92 per dissenting one; an onset lock
-also earns more from clearer clustering. It governs everything else:
+**Confidence** (0..1) is earned: +0.06 per agreeing beat. Dissent costs more the less there is of
+it: ×0.92 per dissenting beat when unsure (about 8 to halve), ×0.98 when sure (about 35 to halve),
+so a lock built on many steady beats is not talked out of its tempo by one odd bar. An onset lock
+also earns more from clearer clustering. Confidence governs everything else:
 
 | | unsure (c → 0) | sure (c → 1) |
 |---|---|---|
 | phase pull per agreeing beat | 0.6 of the error | 0.2 |
 | period pull per agreeing estimate | 0.4 | 0.1 |
-| steady beats needed to replace the lock | 8 over ≥ 3 s | 8 over ≥ 9 s (double for a 2× / 0.5× tempo) |
+| confidence lost per dissenting beat | ×0.92 | ×0.98 |
+| steady beats needed to replace the lock | ≥ 8 spanning ≥ 3 s | ≥ 8 spanning ≥ 9 s |
 | onset estimates needed to replace it | 2 agreeing | 4 agreeing |
 
 So a grid learned from a sparse intro is quickly overruled by real drums, while a grid built on many
@@ -90,8 +93,10 @@ releases each frame when the server clock reaches its timestamp, then:
    `|e| < 0.2·period` the beat agrees: re-anchor at that grid slot pulled toward the beat, pull the
    period toward the estimate only if the estimate is within 4%, raise confidence, clear dissent.
    Otherwise it dissents: lower confidence, coast, and add it to a **candidate** window.
-4. **Replace** the lock only when the candidate window holds 8 beats whose gaps are all within 10% of
-   their median, spanning the confidence-scaled minimum (3–9 s, doubled for an octave relation).
+4. **Replace** the lock only when the candidate, which keeps the dissenting beats of the last
+   confidence-scaled span (3–9 s), holds at least 8 beats whose gaps are all within 10% of their
+   median and which span that whole minimum. A rival at double or half tempo lands on the grid
+   every (other) beat and so counts as agreement; octaves are handled by the divisions, not the lock.
 5. Publish: next grid time ≥ now from the anchor, converted server→local
    (`local = now + (ts − serverNow)/1000`), to `setBeatClock`.
 
