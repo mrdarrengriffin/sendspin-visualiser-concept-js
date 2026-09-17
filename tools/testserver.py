@@ -77,12 +77,25 @@ def synth_chunk(t0: float) -> bytes:
     return (stereo * 32767).astype("<i2").tobytes()
 
 
+# Every 16 bars, bars 8-9 are a "fill": the beat schedule there is deliberately wrong (beats
+# pushed off the grid, one dropped), to check that a locked client rides through it.
+FILL_BARS = range(8, 10)
+FILL_EVERY = 16
+
+
 def beats_between(t0: float, t1: float) -> list[tuple[float, bool]]:
-    """Song-time beats in [t0, t1): (time, is_downbeat)."""
+    """Song-time beats in [t0, t1): (time, is_downbeat), with the periodic fill applied."""
     out = []
-    k = math.ceil(t0 / BEAT - 1e-9)
-    while k * BEAT < t1:
-        out.append((k * BEAT, k % 4 == 0))
+    k = math.ceil((t0 - 0.2) / BEAT - 1e-9)   # widen the search: fill beats move by up to 0.18 s
+    while (k - 1) * BEAT < t1:
+        t, bar, in_bar = k * BEAT, k // 4, k % 4
+        if bar % FILL_EVERY in FILL_BARS:
+            if in_bar == 2:
+                k += 1
+                continue                       # dropped beat
+            t += 0.18 if in_bar % 2 else -0.12  # pushed off the grid
+        if t0 <= t < t1:
+            out.append((t, in_bar == 0))
         k += 1
     return out
 

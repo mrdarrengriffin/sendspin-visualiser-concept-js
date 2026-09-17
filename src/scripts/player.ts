@@ -152,7 +152,8 @@ function tick(): void {
     el.led.style.opacity = String(0.15 + 0.85 * Math.pow(1 - tau / Pms, 5));
     const paths = logo.beatDebug().map((p) => `p${p.path}/${p.div} n=${p.n} v=${p.v} err=${p.errMs >= 0 ? '+' : ''}${p.errMs}ms`).join('  ');
     const coast = clock.coastingMs > 3000 ? `  coasting ${Math.round(clock.coastingMs / 1000)}s` : '';
-    el.beatText.textContent = `${clock.bpm.toFixed(1)} bpm (${clock.source})  downbeats ${clock.downbeats}  lock ${logo.state.beat.on ? 'on' : 'off'}${coast}   ${paths}`;
+    const dissent = clock.dissent ? `  dissent ${clock.dissent}` : '';
+    el.beatText.textContent = `${clock.bpm.toFixed(1)} bpm (${clock.source})  conf ${clock.confidence.toFixed(2)}${dissent}  relocks ${clock.relocks}  lock ${logo.state.beat.on ? 'on' : 'off'}${coast}   ${paths}`;
   } else {
     el.led.style.opacity = '0.15';
     const types = vizConfig?.types ?? [];

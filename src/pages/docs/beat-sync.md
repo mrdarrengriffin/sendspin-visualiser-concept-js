@@ -55,7 +55,24 @@ browser cannot see (Bluetooth, TV). Persisted in the player.
 Changing a division affects only dashes not yet on screen; visible ones finish their traversal at
 the old spacing (one traversal of settle). This is deliberate; re-timing visible dashes would jump.
 
-## The beat clock (in `player.html`)
+## The beat clock (`src/lib/beat/tempo.ts`, class `BeatClock`)
+
+The clock is **sticky**. It holds one lock, `{ period, anchor, source, confidence }`, and treats
+every new piece of evidence as a claim to be tested against that lock rather than as a new answer.
+
+**Confidence** (0..1) is earned: +0.06 per agreeing beat, ×0.92 per dissenting one; an onset lock
+also earns more from clearer clustering. It governs everything else:
+
+| | unsure (c → 0) | sure (c → 1) |
+|---|---|---|
+| phase pull per agreeing beat | 0.6 of the error | 0.2 |
+| period pull per agreeing estimate | 0.4 | 0.1 |
+| steady beats needed to replace the lock | 8 over ≥ 3 s | 8 over ≥ 9 s (double for a 2× / 0.5× tempo) |
+| onset estimates needed to replace it | 2 agreeing | 4 agreeing |
+
+So a grid learned from a sparse intro is quickly overruled by real drums, while a grid built on many
+steady beats rides through a fill or a breakdown: the off-grid beats count as dissent, the grid
+coasts, and it snaps back into full trust as soon as on-grid beats resume.
 
 ### From Sendspin beats (preferred)
 
@@ -63,30 +80,39 @@ Music Assistant sends `beat` frames with server-clock timestamps, about 3 s ahea
 20 ms audio chunk grid (so consecutive gaps alternate, e.g. 440/460 for a 450 ms beat). The player
 releases each frame when the server clock reaches its timestamp, then:
 
-1. Keep the last 12 beat timestamps (`ts`) and, for the track, all of them (`all`, max 600).
-2. Discontinuity: if any gap in `ts` deviates more than 25% from the median, drop everything before
-   it (missed beat, or a re-anchored schedule after a seek).
-3. Short estimate: least-squares fit `t_i = a + P·i` over `ts` (phase and period, both averaged).
-4. Long estimate, once `all` has ≥ 24 beats: **trimmed mean of gaps** (gaps within ±15% of the
-   median). Use it if within 3% of the short one; otherwise restart `all` (tempo change). Do not use
-   a line fit over `all`: a re-pushed schedule shifts later timestamps by an offset and biases it.
-5. Octave guard: a new estimate at 2× or 0.5× the established period is held to the old period for
-   8 s before being believed.
-6. Predict the next beat from the fit, convert server→local (`local = now + (ts − serverNow)/1000`),
-   call `setBeatClock`.
+1. **Estimate.** Keep the last 12 timestamps and, for the track, all of them (max 600). If a gap in
+   the short window deviates > 25% from its median, use only what follows it (missed beat, or a
+   schedule re-anchored after a seek). Short estimate: least-squares fit `t_i = a + P·i`. Long
+   estimate once ≥ 24 beats: trimmed mean of gaps (within ±15% of median), used when within 3% of
+   the short one. Never line-fit the long window: a re-pushed schedule adds an offset that biases it.
+2. **First lock** from the first estimate, confidence 0.3.
+3. **Judge each beat against the lock.** Phase error `e` = distance from the nearest grid time. If
+   `|e| < 0.2·period` the beat agrees: re-anchor at that grid slot pulled toward the beat, pull the
+   period toward the estimate only if the estimate is within 4%, raise confidence, clear dissent.
+   Otherwise it dissents: lower confidence, coast, and add it to a **candidate** window.
+4. **Replace** the lock only when the candidate window holds 8 beats whose gaps are all within 10% of
+   their median, spanning the confidence-scaled minimum (3–9 s, doubled for an octave relation).
+5. Publish: next grid time ≥ now from the anchor, converted server→local
+   (`local = now + (ts − serverNow)/1000`), to `setBeatClock`.
 
-**Coasting.** With a long estimate in hand the grid runs for the rest of the track when beats stop
-(accuracy ~0.03%, well under a beat over minutes); with only a short estimate it coasts 30 s. A
-track change, seek (`stream/clear`) or stream end drops the grid immediately.
+**Coasting.** With ≥ 24 beats for the track the grid runs for the rest of the track when beats stop;
+with fewer it coasts 30 s. Track change, seek (`stream/clear`) and stream end drop the lock.
+
+Verified on the test server, which deliberately pushes two bars in every sixteen off the grid and
+drops a beat: confidence fell from 1.0 to 0.34 through the fill, dissent counted up and back to 0,
+no relock, tempo constant, all paths at 0 ms error throughout.
 
 ### From onsets (fallback, when the server has no beats)
 
 Every `peak` frame is an onset with a strength. Every second, score candidate periods from 60 to
 180 BPM (4 ms steps, refined to 0.25 ms) by phase clustering of the last 10 s of onsets:
 `|Σ w·e^(2πi·t/P)| / Σ w`, weights `w = (0.3 + strength/255) · recency`. Prefer 80–160 BPM (×0.8
-outside). Adopt when two consecutive estimates agree within 3% and score ≥ 0.5; once adopted, keep
-it unless a different tempo keeps winning. Server beats always take precedence: if the stream
-includes `beat`, or a server tempo is established for the track, onsets are ignored.
+outside); ignore scores below 0.5. First lock when two consecutive estimates agree within 3%, with
+confidence from the clustering score. Afterwards each estimate is judged against the lock like a
+beat (period within 4%, phase within 0.2·period): agreement pulls and earns confidence (double for
+scores ≥ 0.75), dissent must persist for 2 (unsure) or 4 (sure) consecutive agreeing estimates to
+replace the lock. Server beats always take precedence: if the stream offers `beat`, or a server
+lock exists, onsets are ignored.
 
 Measured: on a clear-pulse track it locked at the correct 123 BPM with scores 0.73–0.93. Start-up
 needs 6 onsets and two agreeing estimates, about 4 s of clear beat. Octave errors are possible on
