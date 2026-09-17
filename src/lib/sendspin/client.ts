@@ -56,7 +56,13 @@ export interface PlayerState {
 export type ControllerCommand = 'play' | 'pause' | 'stop' | 'next' | 'previous' | 'volume' | 'mute';
 
 export interface SendspinPlayerConfig {
-  baseUrl: string;
+  /** `http://<host>:8927`; the client derives `ws://<host>:8927/sendspin`. Required unless `webSocket` is given. */
+  baseUrl?: string;
+  /**
+   * A pre-opened (or still CONNECTING) WebSocket-shaped transport the client adopts instead of
+   * dialling `baseUrl`; the library never auto-reconnects an adopted socket. See ./ma-webrtc.ts.
+   */
+  webSocket?: WebSocket;
   clientName?: string;
   productName?: string;
   visualizer?: VisualizerRequest;

@@ -1,16 +1,25 @@
 ---
-/** Shown by the player script when the page is served over https:// (ws:// to a LAN server is then blocked). */
+/**
+ * Shown by the player script when the page is served over https:// from a public host. A plain
+ * ws:// socket to a LAN Music Assistant is blocked there (mixed content, and Chrome's Local Network
+ * Access rule), so the player switches to the remote route: WebRTC through Music Assistant's own
+ * remote access. The note tells the user what that needs.
+ */
 ---
-<div class="https-warning" data-https-warning hidden>
-  This page is loaded over HTTPS, so your browser blocks the plain <code>ws://</code> connection to a
-  Music Assistant on your network (mixed content). The lab and the docs work here; to connect, serve
-  the site over plain <code>http://</code>: <code>git clone</code> the
-  <a href="https://github.com/mrdarrengriffin/sendspin-visualiser-concept-js">repository</a> and run
-  <code>npm install &amp;&amp; npm run dev</code>, or copy <code>dist/</code> to an http host.
+<div class="route-note" data-https-warning hidden>
+  This page is served over HTTPS from a public host, so the browser will not open a plain
+  <code>ws://</code> socket to a Music Assistant on your network. The player therefore connects the
+  way the Music Assistant app does from outside the home: over WebRTC through
+  <strong>Music Assistant remote access</strong>. In Music Assistant open
+  <em>Settings → Remote access</em>, enable it, and paste the <strong>Remote ID</strong> shown
+  there into the field above; no Home Assistant Cloud subscription is needed (it only adds TURN
+  relays for awkward networks). Prefer the direct <code>ws://</code> route? Serve the site from a
+  LAN address (<code>npm run dev</code>, or <code>dist/</code> on a LAN http host).
   <a data-http-link href="#" hidden>Try the http:// address of this page</a>.
 </div>
 
 <style>
-  .https-warning { background: #c33; color: #fff; padding: 10px 16px; font-size: 14px; }
-  .https-warning a { color: #fff; font-weight: 600; }
+  .route-note { background: #2a3a55; color: #fff; padding: 10px 16px; font-size: 14px; line-height: 1.45; }
+  .route-note a { color: #fff; font-weight: 600; }
+  .route-note code { background: #fff2; padding: 1px 5px; border-radius: 4px; }
 </style>

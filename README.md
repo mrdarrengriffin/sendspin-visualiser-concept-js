@@ -21,7 +21,8 @@ npm run dev          # http://localhost:4321
 
 - `/` — the Sendspin player. Enter your Music Assistant address (`192.168.1.10` is enough; the
   scheme and port `8927` are filled in) and press Connect. A player named "Sendspin Logo" appears in
-  Music Assistant; play to it.
+  Music Assistant; play to it. (From the public GitHub Pages copy the same page asks for your
+  Music Assistant Remote ID instead; see "Hosting it for others".)
 - `/lab` — the logo lab: every animation control, no server needed, plus a fake 120 BPM clock to
   see the beat lock.
 - `/docs/` — the documentation.
@@ -32,24 +33,50 @@ npm run dev          # http://localhost:4321
 
 ## Hosting it for others
 
-Plain static files, with one rule: **serve it over `http://`, not `https://`**. Music Assistant's
-Sendspin endpoint is a plain `ws://` WebSocket (the protocol encrypts inside it with Noise), and
-browsers block `ws://` connections from an HTTPS page. The player detects an HTTPS load and shows a
-link to the http:// copy.
+Plain static files. The one thing to decide is how the player reaches Music Assistant's Sendspin
+server, and the player picks it by where the page is served from (the `auto` route; the selector
+in the control bar or `?route=ws|webrtc` overrides it):
+
+- **Direct (`ws://`)**: the page opens `ws://<ma>:8927/sendspin` itself. Browsers only allow that
+  from a page they consider local: served over plain `http://` from a LAN or loopback address
+  (`npm run dev`, or `dist/` on a LAN http host). An `https://` page cannot open `ws://` (mixed
+  content), and Chrome gates any *public* origin talking to a private address (Local Network
+  Access: a prompt, or `ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS` when it cannot prompt).
+- **Remote (WebRTC)**: the page connects the way the Music Assistant app does from outside the
+  home, through Music Assistant's own **remote access**: a Remote ID, the Nabu Casa signalling
+  server, an `RTCPeerConnection`, and a `sendspin` data channel that Music Assistant bridges onto
+  the same Sendspin server. It works from any origin, https included, and from outside your LAN.
+  Details in the [Sendspin integration doc](src/pages/docs/sendspin-integration.md).
 
 `.github/workflows/deploy.yml` builds and deploys to GitHub Pages on every push to `main`:
 **https://mrdarrengriffin.github.io/sendspin-visualiser-concept-js/** (`site` and `base` in
-`astro.config.mjs`). github.io enforces HTTPS, so on that address the **lab and docs work but the
-player cannot connect** to a Music Assistant; it says so on the page. To connect, run `npm run dev`
-locally or copy `dist/` to any host that serves plain `http://` (on a custom Pages domain, untick
-"Enforce HTTPS"). Markdown links in the docs are rewritten onto the base path by a small rehype
-plugin in the config, so keep them root-absolute (`/docs/...`).
+`astro.config.mjs`). github.io enforces HTTPS, so that copy uses the remote route. Markdown links
+in the docs are rewritten onto the base path by a small rehype plugin in the config, so keep them
+root-absolute (`/docs/...`).
 
-Chrome also gates any public page talking to a private network address (Local Network Access:
-a permission prompt, or `ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS` when it cannot prompt). A copy
-served from a LAN address avoids both rules; serving from the Music Assistant host itself, or over
-WebRTC through the MA API as MA's own frontend does, is the long-term answer. See the Sendspin
-integration doc.
+### Connecting from the hosted page
+
+Once, in Music Assistant (2.7 or newer):
+
+1. Open **Settings → Remote access** (in the core settings) and switch it **on**. No Home Assistant
+   Cloud subscription is needed; with one, Music Assistant also gets TURN relays, which only matter
+   on networks where a direct WebRTC path cannot be found.
+2. Copy the **Remote ID** shown there: 26 letters and digits. It is derived from the server's
+   WebRTC certificate, so the page can verify it is talking to your server and nothing else.
+
+Then on the hosted page: the route reads `auto` (remote), paste the Remote ID into the field and
+press Connect. The status line walks through `signalling`, `offer`, `answer` and ends at
+`connected (remote, host→srflx)` or similar (the ICE candidate types of the path it found); a
+"Sendspin Logo" player appears in Music Assistant as usual. The Remote ID is kept in the browser's
+`localStorage` only, never in the URL. No Music Assistant user or token is involved: the
+`sendspin` channel lands on the Sendspin server itself, which admits unpaired clients by default
+exactly as it does on the LAN. Pairing, if the server demands it, shows its PIN in the status line
+as before.
+
+If it fails: "Server not found" means remote access is off or the ID is mistyped;
+"WebRTC connection failed" means no path between browser and server was found (a restrictive
+network; TURN via Home Assistant Cloud fixes that); "certificate does not match" means the peer
+that answered is not the server the Remote ID names.
 
 ## Layout
 
@@ -60,6 +87,7 @@ integration doc.
 | `src/lib/beat/tempo.ts` | the beat clock: one sticky lock fed by server beats (onset fallback); the last eight beats are classed coherent / half / drift / incoherent and only coherent runs move it; coasting |
 | `src/lib/color.ts` | contrast, saturation, the palette policy |
 | `src/lib/sendspin/client.ts` | typed surface of the patched Sendspin client and its lazy loader |
+| `src/lib/sendspin/ma-webrtc.ts` | the remote route: Music Assistant remote-access signalling, certificate pinning, and a WebSocket-shaped `sendspin` data channel for the client to adopt |
 | `src/lib/sendspin/vendor/` | the patched `@sendspin/sendspin-js` bundle (adds visualizer and colour roles) |
 | `src/scripts/player.ts`, `src/scripts/lab.ts` | page wiring |
 | `src/components/`, `src/layouts/`, `src/pages/` | Astro UI and the docs pages |

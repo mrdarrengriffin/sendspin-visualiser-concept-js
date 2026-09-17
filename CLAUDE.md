@@ -22,7 +22,8 @@ The docs are Markdown pages in `src/pages/docs/` (rendered at `/docs/` on the si
 - `src/lib/` is the portable core and has no framework dependency. `logo/geometry.ts` is data and
   pure functions; `logo/index.ts` is the queue, renderer and beat lock behind `mountLogo()`;
   `beat/tempo.ts` is the `BeatClock`; `color.ts` the palette policy; `sendspin/client.ts` the typed
-  surface of the patched client plus its loader.
+  surface of the patched client plus its loader; `sendspin/ma-webrtc.ts` the remote route (Music
+  Assistant remote access over WebRTC, handed to the client as an adopted socket).
 - `src/scripts/player.ts` and `lab.ts` wire the lib to the DOM; UI elements are addressed by
   `data-control`, `data-track`, `data-beat`, `data-palette`, `data-logo` attributes, never ids.
 - `src/components/` and `src/layouts/` are Astro; `src/pages/` has the player (`/`), the lab

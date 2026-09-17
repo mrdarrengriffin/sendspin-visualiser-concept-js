@@ -7,15 +7,17 @@ import { BeatClock, type TempoLogEntry } from '@lib/beat/tempo';
 import { contrast, PALETTE_KEYS, rgbArrayToHex, shapeColoursFor, type Palette } from '@lib/color';
 import {
   loadSendspin, normaliseBaseUrl, VISUALIZER_REQUEST,
-  type ColorState, type PlayerState, type SendspinPlayer, type VisualizerFrame, type VisualizerStreamConfig,
+  type ColorState, type PlayerState, type SendspinPlayer, type SendspinPlayerConfig, type VisualizerFrame, type VisualizerStreamConfig,
 } from '@lib/sendspin/client';
+import { isLanHostname, normaliseRemoteId, openRemoteSendspinSocket, type RemoteSendspinSocket } from '@lib/sendspin/ma-webrtc';
 
 // ------------------------------------------------------------------ DOM
 const control = <T extends HTMLElement = HTMLElement>(name: string) =>
   document.querySelector<T>(`[data-control="${name}"]`)!;
 const input = (name: string) => control<HTMLInputElement>(name);
 const el = {
-  url: input('url'), connect: control<HTMLButtonElement>('connect'), status: control('status'),
+  url: input('url'), remoteId: input('remote-id'), route: control<HTMLSelectElement>('route'),
+  connect: control<HTMLButtonElement>('connect'), status: control('status'),
   vol: input('vol'), react: input('react'), pulse: input('pulse'), flash: input('flash'), spectrum: input('spectrum'),
   sat: input('sat'), lock: input('lock'), onsets: input('onsets'), divs: input('divs'), offset: input('offset'),
   offsetValue: control('offset-value'), debug: input('debug'), markers: input('markers'),
@@ -255,10 +257,34 @@ function onState(state: PlayerState): void {
   el.status.textContent = `${state.isPlaying ? 'playing' : 'idle'}${state.groupState?.group_name ? ' · ' + state.groupState.group_name : ''}`;
 }
 
-// ------------------------------------------------------------------ connect / disconnect
+// ------------------------------------------------------------------ connection route
+// Two ways to reach Music Assistant's Sendspin server (docs/sendspin-integration, "Hosting"):
+//   ws     a plain ws://<ma>:8927/sendspin socket; only from a page the browser considers local
+//          (http:// on a LAN/loopback host), since https pages and public origins are blocked
+//   webrtc Music Assistant remote access: signalled through the Nabu Casa signalling server by
+//          Remote ID, a `sendspin` data channel bridged to the same server; works from anywhere
+// "auto" picks by where this page is served from; ?route=ws|webrtc forces one for a session.
+type Route = 'ws' | 'webrtc';
+const onLan = isLanHostname(location.hostname);
+const routeParam = params.get('route');
+const forcedRoute: Route | null = routeParam === 'ws' || routeParam === 'webrtc' ? routeParam : null;
+el.route.value = localStorage.getItem('sendspin.route') ?? 'auto';
+const effectiveRoute = (): Route =>
+  forcedRoute ?? (el.route.value === 'ws' || el.route.value === 'webrtc' ? el.route.value : onLan ? 'ws' : 'webrtc');
+function showRoute(): void {
+  const r = effectiveRoute();
+  el.url.hidden = r !== 'ws';
+  el.remoteId.hidden = r !== 'webrtc';
+  if (forcedRoute) { el.route.value = forcedRoute; el.route.disabled = true; el.route.title = `forced to ${forcedRoute} by ?route=`; }
+}
+el.route.addEventListener('change', () => { localStorage.setItem('sendspin.route', el.route.value); showRoute(); });
+el.remoteId.addEventListener('change', () => { el.remoteId.value = normaliseRemoteId(el.remoteId.value); });
+
 const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
 el.url.value = localStorage.getItem('sendspin.url') ?? (isLocal ? 'http://localhost:8927' : '');
-if (location.protocol === 'https:') {
+el.remoteId.value = localStorage.getItem('sendspin.remoteId') ?? '';
+showRoute();
+if (location.protocol === 'https:' && !onLan) {
   el.httpsWarning.hidden = false;
   // github.io redirects http:// back to https://, so the link is only offered elsewhere
   if (!location.hostname.endsWith('github.io')) {
@@ -267,14 +293,39 @@ if (location.protocol === 'https:') {
   }
 }
 
+// ------------------------------------------------------------------ connect / disconnect
+let remote: RemoteSendspinSocket | null = null;
+let live = false; // true between a successful connect() and disconnect()
+
 async function connect(): Promise<void> {
-  const baseUrl = normaliseBaseUrl(el.url.value);
-  if (!baseUrl) { el.status.textContent = 'enter your Music Assistant address, e.g. 192.168.1.10'; return; }
-  el.url.value = baseUrl;
-  localStorage.setItem('sendspin.url', baseUrl);
+  const route = effectiveRoute();
+  const transport: Pick<SendspinPlayerConfig, 'baseUrl' | 'webSocket'> = {};
+  if (route === 'ws') {
+    const baseUrl = normaliseBaseUrl(el.url.value);
+    if (!baseUrl) { el.status.textContent = 'enter your Music Assistant address, e.g. 192.168.1.10'; return; }
+    el.url.value = baseUrl;
+    localStorage.setItem('sendspin.url', baseUrl);
+    transport.baseUrl = baseUrl;
+  } else {
+    const remoteId = normaliseRemoteId(el.remoteId.value);
+    if (!remoteId) { el.status.textContent = 'enter the Remote ID from Music Assistant → Settings → Remote access'; return; }
+    el.remoteId.value = remoteId;
+    localStorage.setItem('sendspin.remoteId', remoteId);
+    // the socket is handed over CONNECTING so unlock() can still be the click's first await
+    remote = openRemoteSendspinSocket({
+      remoteId,
+      onStage: (s) => { if (s !== 'closed' && s !== 'open') el.status.textContent = `remote: ${s}…`; },
+      log: (kind, data) => blog(kind, data),
+    });
+    const mine = remote;
+    remote.onclose = (reason) => { // a live session ending; a failed connect is reported by connect() itself
+      if (remote === mine && player && live) { blog('remote:lost', { reason }); disconnect(); el.status.textContent = `connection lost: ${reason}`; }
+    };
+    transport.webSocket = remote.socket;
+  }
   const { SendspinPlayer } = await loadSendspin();
   player = new SendspinPlayer({
-    baseUrl,
+    ...transport,
     clientName: 'Sendspin Logo',
     productName: 'Sendspin logo visualiser',
     visualizer: VISUALIZER_REQUEST,
@@ -292,25 +343,34 @@ async function connect(): Promise<void> {
     reconnect: { onReconnecting: (n) => { el.status.textContent = `reconnecting (${n})`; }, onReconnected: () => { el.status.textContent = 'connected'; } },
   });
   window.player = player;
+  el.connect.disabled = true;
   try {
     await player.unlock(); // must be the first awaited work in the click handler (audio unlock)
-    el.status.textContent = 'connecting…';
+    if (route === 'ws') el.status.textContent = 'connecting…';
+    const session = await remote?.ready; // the data channel; rejects with the real reason on failure
     await player.connect();
     player.setVolume(+el.vol.value);
+    live = true;
     el.connect.textContent = 'Disconnect';
-    el.status.textContent = 'connected';
+    el.status.textContent = session ? `connected (remote${session.route ? ', ' + session.route : ''})` : 'connected';
   } catch (e) {
-    const blocked = location.protocol === 'https:' ? ' (an HTTPS page cannot reach a ws:// server; serve the site over http://)' : '';
-    el.status.textContent = `failed: ${(e as Error)?.message ?? e}${blocked}`;
+    const hint = route === 'ws' && (location.protocol === 'https:' || !onLan)
+      ? ' (this page cannot open a ws:// socket to a LAN server; pick the remote route, or serve the site from a LAN http:// address)' : '';
+    el.status.textContent = `failed: ${(e as Error)?.message ?? e}${hint}`;
     console.error(e);
     // stop the client's own reconnect loop; a failed first connect otherwise keeps retrying and
     // its callbacks keep mutating our state after we have let go of it
     player?.disconnect('user_request');
     player = null;
+    remote?.close(); remote = null;
+  } finally {
+    el.connect.disabled = false;
   }
 }
 function disconnect(): void {
+  live = false;
   player?.disconnect('user_request');
+  const r = remote; remote = null; r?.close();
   player = null; streaming = false;
   el.connect.textContent = 'Connect'; el.status.textContent = 'disconnected';
   logo.setAnimating(false); clock.reset('disconnect');

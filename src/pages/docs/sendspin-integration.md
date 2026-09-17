@@ -15,26 +15,67 @@ Spec: https://github.com/Sendspin/spec. Relevant parts: `messaging.md` (handshak
 
 ## Connection
 
-- Music Assistant listens at `ws://<ma-ip>:8927/sendspin`. The JS client takes
-  `baseUrl: "http://<ma-ip>:8927"` and builds the WebSocket URL itself.
-- Transport is encrypted (Noise). Unpaired ("Sentinel PSK") clients are admitted by default; a
-  pairing PIN may be shown in the status line if the server requires pairing.
-- `connect()` must follow `unlock()` inside a real click handler so the browser allows audio.
+Two routes reach the same Sendspin server; everything above the transport is identical.
+
+**Direct.** Music Assistant listens at `ws://<ma-ip>:8927/sendspin`. The JS client takes
+`baseUrl: "http://<ma-ip>:8927"` and builds the WebSocket URL itself. Transport is encrypted
+(Noise). Unpaired ("Sentinel PSK") clients are admitted by default; a pairing PIN may be shown in
+the status line if the server requires pairing. `connect()` must follow `unlock()` inside a real
+click handler so the browser allows audio.
+
+**Remote** (Music Assistant remote access, `src/lib/sendspin/ma-webrtc.ts`). The page borrows the
+route Music Assistant's own app uses from outside the home: an `RTCPeerConnection` to the Music
+Assistant host, signalled by **Remote ID** through the Nabu Casa signalling server, carrying a
+data channel labelled `sendspin` that Music Assistant's gateway pumps onto
+`ws://<ma>:8927/sendspin` with text and binary frames preserved. The open channel is wrapped as a
+WebSocket-shaped object and handed to the client through its `webSocket` option (sendspin-js
+adopts a pre-opened socket instead of dialling `baseUrl`; adopted sockets never auto-reconnect).
+Sequence, all signalling messages JSON text over `wss://signaling.music-assistant.io/ws`:
+
+1. `{ type: "connect-request", remoteId }` → `{ type: "connected", sessionId, iceServers }`, or
+   `{ type: "error", error }` ("Server not found" when remote access is off or the ID is wrong).
+   The ICE servers come from the Music Assistant server: public STUN, plus Home Assistant Cloud
+   TURN when the server has a subscription.
+2. Create the peer connection with those ICE servers, create the `sendspin` channel
+   (`ordered: true`) **before** the offer, then send `{ type: "offer", remoteId, sessionId,
+   data: { type, sdp } }`. Local ICE candidates go out as `{ type: "ice-candidate", remoteId,
+   sessionId, data }` as they appear; the gateway's arrive the same way (buffer them until the
+   remote description is set).
+3. `{ type: "answer", sessionId, data: { type, sdp } }`. **Pin it**: the Remote ID is the first 128
+   bits of the SHA-256 fingerprint of the server's DTLS certificate, base32 (RFC 4648, no padding,
+   with `9` written in place of `2`), 26 characters. Delete every non-SHA-256 `a=fingerprint:` line
+   from the SDP and require every remaining SHA-256 fingerprint to start with those 16 bytes,
+   otherwise abort. Only then `setRemoteDescription`.
+4. The channel opens; the Sendspin handshake proceeds on it unchanged. Keep the signalling socket
+   open for the life of the session: the gateway closes the whole peer connection when the
+   signalling server reports the client gone. Answer `{ type: "ping" }` with `{ type: "pong" }`.
+
+No Music Assistant login is involved. The Remote ID is the only input; the Sendspin protocol's own
+Noise handshake and pairing rules apply on the channel exactly as on a LAN socket. (Music
+Assistant also offers WebRTC signalled over its **authenticated API** — commands
+`sendspin/ice_servers`, `sendspin/connect {offer}` → `{session_id, answer, ice_candidates}`,
+`sendspin/ice {session_id, candidate}`, `sendspin/disconnect` — but that API is a `ws://` socket
+on port 8095, blocked from an https page by the same rule as the Sendspin socket, so it is of no
+use to a hosted page; the Remote ID route is.)
 
 ## Hosting constraints
 
-- The Sendspin endpoint is `ws://` (no TLS by design). A page served over `https://` cannot open
-  it (mixed content). Host over plain `http://`, or from the MA host (same origin), or use MA's
-  WebRTC route: the MA frontend obtains ICE servers and signals an `RTCPeerConnection` through the
-  authenticated MA API (`sendspin/ice_servers`, `sendspin/connect`, `sendspin/ice`), then hands the
-  DataChannel to sendspin-js as a bring-your-own transport. That works from any origin and from
-  outside the LAN, at the cost of implementing the MA login.
-- Chrome's Local Network Access rules apply to any *public* page connecting to a private address,
-  http or https: headless Chrome fails with `net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS`, a
-  normal window shows a permission prompt the user must accept. The GitHub Pages copy hits both
-  this and the mixed-content rule. A page served from a LAN address (`npm run dev`, or `dist/` on a
-  LAN host) is not public and connects without prompts.
-- The connection needs a user gesture (click) before audio can start.
+- A plain `ws://` socket to a LAN address is only allowed from a page the browser treats as local:
+  served over `http://` from a LAN or loopback host. Two rules block it elsewhere: mixed content
+  (an `https://` page may not open `ws://`), and Chrome's Local Network Access rule for any
+  *public* origin talking to a private address (a permission prompt, or
+  `net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS` when it cannot prompt, as in headless Chrome).
+  The GitHub Pages copy hits both.
+- The remote route above has no such constraints: it works from any origin and from outside the
+  LAN. Its costs are a one-off setting in Music Assistant (Settings → Remote access → on, copy the
+  Remote ID), a WebRTC path between browser and server (STUN suffices on most home networks; TURN
+  via Home Assistant Cloud covers the rest), and a few hundred milliseconds more to connect.
+- The player chooses by hostname: a private IP, loopback, `.local`/`.lan`/bare intranet name means
+  direct, anything else means remote; the control bar selector or `?route=ws|webrtc` overrides.
+  The Remote ID is stored in `localStorage`, never in the URL.
+- The connection needs a user gesture (click) before audio can start. On the remote route the
+  socket is handed to the client while still connecting, so `unlock()` remains the click's first
+  awaited work and signalling runs meanwhile.
 
 ## Roles used
 
