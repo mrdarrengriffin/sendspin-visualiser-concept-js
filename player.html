@@ -8,6 +8,8 @@
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif;
                transition: background 600ms ease, color 600ms ease; }
   body { display: grid; grid-template-rows: auto 1fr auto; }
+  #https-warning { background: #c33; color: #fff; padding: 10px 16px; font-size: 14px; }
+  #https-warning a { color: #fff; font-weight: 600; }
   #bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 12px 16px; font-size: 13px; }
   #bar input[type=text] { width: 260px; padding: 6px 8px; background: #0006; color: inherit; border: 1px solid #fff3; border-radius: 6px; }
   button { padding: 6px 12px; background: #fff2; color: inherit; border: 1px solid #fff3; border-radius: 6px; cursor: pointer; }
@@ -34,8 +36,12 @@
 </style>
 </head>
 <body>
+<div id="https-warning" hidden>
+  This page is loaded over HTTPS, so your browser will block the plain WebSocket connection to a
+  Music Assistant on your network. Open the <a id="http-link" href="#">http:// version of this page</a> instead.
+</div>
 <div id="bar">
-  <input id="url" type="text" placeholder="http://music-assistant:8927">
+  <input id="url" type="text" placeholder="http://<music-assistant-ip>:8927">
   <button id="connect">Connect</button>
   <span id="status">disconnected</span>
   <span style="flex:1"></span>
@@ -81,8 +87,16 @@ const logo = mountLogo($('logo'), { speed: 30, maxFps: +params.get('fps') || (LI
 window.logo = logo;
 
 // ---------- server URL ----------
+// Remember the last Music Assistant address. When served from localhost assume MA is on this
+// machine; when hosted elsewhere leave it blank, the user's MA is on their own network.
 const saved = localStorage.getItem('sendspin.url');
-$('url').value = saved || `http://${location.hostname}:8927`;
+const local = ['localhost', '127.0.0.1'].includes(location.hostname);
+$('url').value = saved || (local ? 'http://localhost:8927' : '');
+// A page on https:// cannot open ws:// to a LAN address (mixed content). Point at the http:// copy.
+if (location.protocol === 'https:') {
+  $('https-warning').hidden = false;
+  $('http-link').href = 'http://' + location.host + location.pathname + location.search;
+}
 
 // ---------- visualizer frame queue, released on the server clock ----------
 // Frames carry a server-clock timestamp for when they should be shown. We hold them until the
@@ -433,7 +447,11 @@ function onState(state) {
 // ---------- connect ----------
 $('connect').addEventListener('click', async () => {
   if (player) { player.disconnect('user_request'); player = null; streaming = false; $('connect').textContent = 'Connect'; $('status').textContent = 'disconnected'; logo.setAnimating(false); return; }
-  const baseUrl = $('url').value.trim();
+  let baseUrl = $('url').value.trim();
+  if (!baseUrl) { $('status').textContent = 'enter your Music Assistant address, e.g. http://192.168.1.10:8927'; return; }
+  if (!/^https?:\/\//.test(baseUrl)) baseUrl = 'http://' + baseUrl;          // accept a bare IP or host
+  if (!/:\d+/.test(baseUrl.replace(/^https?:\/\//, ''))) baseUrl += ':8927';  // default Sendspin port
+  $('url').value = baseUrl;
   localStorage.setItem('sendspin.url', baseUrl);
   player = new SendspinPlayer({
     baseUrl,
@@ -467,7 +485,8 @@ $('connect').addEventListener('click', async () => {
     $('connect').textContent = 'Disconnect';
     $('status').textContent = 'connected';
   } catch (e) {
-    $('status').textContent = 'failed: ' + (e?.message || e);
+    const blocked = location.protocol === 'https:' ? ' (HTTPS page cannot reach a ws:// server; use the http:// page)' : '';
+    $('status').textContent = 'failed: ' + (e?.message || e) + blocked;
     console.error(e);
     player = null;
   }

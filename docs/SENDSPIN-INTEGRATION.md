@@ -15,6 +15,18 @@ Spec: https://github.com/Sendspin/spec. Relevant parts: `messaging.md` (handshak
   pairing PIN may be shown in the status line if the server requires pairing.
 - `connect()` must follow `unlock()` inside a real click handler so the browser allows audio.
 
+## Hosting constraints
+
+- The Sendspin endpoint is `ws://` (no TLS by design). A page served over `https://` cannot open
+  it (mixed content). Host over plain `http://`, or from the MA host (same origin), or use MA's
+  WebRTC route: the MA frontend obtains ICE servers and signals an `RTCPeerConnection` through the
+  authenticated MA API (`sendspin/ice_servers`, `sendspin/connect`, `sendspin/ice`), then hands the
+  DataChannel to sendspin-js as a bring-your-own transport. That works from any origin and from
+  outside the LAN, at the cost of implementing the MA login.
+- Chrome's Private Network Access rules may prompt or block a public page connecting to a private
+  address; test on current browsers when hosting publicly.
+- The connection needs a user gesture (click) before audio can start.
+
 ## Roles used
 
 | Role | Purpose here |

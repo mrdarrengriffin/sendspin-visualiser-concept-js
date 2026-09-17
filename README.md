@@ -21,6 +21,19 @@ python -m http.server 8000        # in this folder
 - No Music Assistant handy: `tools/testserver.py` streams a synthetic groove with beats
   (`tools/README.md`); connect the player to `http://127.0.0.1:8928`.
 
+## Hosting it for others
+
+The page can be hosted as plain static files, with one rule: **serve it over `http://`, not
+`https://`**. Music Assistant's Sendspin endpoint is a plain `ws://` WebSocket (the protocol
+encrypts inside it with Noise), and browsers block `ws://` connections from an HTTPS page. The
+player detects an HTTPS load and shows a link to the http:// copy. Users then enter their own
+Music Assistant address, for example `192.168.1.10` (the `http://` and `:8927` are filled in).
+
+Browsers are also tightening rules for public pages talking to private networks, so a hosted page
+may need users to accept a prompt in future browser versions. Serving the page from the Music
+Assistant host itself, or over WebRTC through the MA API as MA's own frontend does, avoids both
+issues; see `docs/SENDSPIN-INTEGRATION.md`.
+
 ## Files
 
 | Path | What |
