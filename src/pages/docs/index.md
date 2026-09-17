@@ -28,7 +28,7 @@ Read in this order:
 |---|---|
 | `src/lib/logo/geometry.ts` | the arcs, chains, constants and pure helpers: the part a port copies |
 | `src/lib/logo/index.ts` | the logo module: queue, rendering, beat lock (`mountLogo()`) |
-| `src/lib/beat/tempo.ts` | the beat clock: one sticky, confidence-weighted lock fed by server beats (onset fallback), coasting |
+| `src/lib/beat/tempo.ts` | the beat clock: one sticky lock fed by server beats (onset fallback), moved only by self-consistent runs, coasting |
 | `src/lib/color.ts` | contrast, saturation, the palette policy |
 | `src/lib/sendspin/client.ts` | typed surface of the patched Sendspin client and its loader |
 | `src/scripts/player.ts`, `src/scripts/lab.ts` | page wiring |

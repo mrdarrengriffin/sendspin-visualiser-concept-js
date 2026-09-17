@@ -1,15 +1,23 @@
 """Local Sendspin test server: streams a synthetic groove with beats, colours and metadata.
 
 Lets the browser visualizer be exercised end to end without Music Assistant.
-Run:  venv/Scripts/python testserver.py [port]
+Run:  venv/Scripts/python testserver.py [port] [options]
 Then connect the player page to http://127.0.0.1:<port>
+
+Scenarios for the beat clock (all off by default except the fill):
+  --no-fill                 steady beats throughout (default: two off-grid bars in every sixteen)
+  --bpm2 100 --switch-at 40 change tempo after N seconds (a genuine tempo relock)
+  --shift-ms 200 --shift-at 30
+                            from N seconds on, every beat is pushed by this much at the same tempo
+                            (a re-pushed, phase-shifted beat list: a phase relock)
+  --sparse 10               only every other beat for the first N seconds (a sparse intro)
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import math
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -34,6 +42,8 @@ SR, CH = 48000, 2
 BPM = 120.0
 BEAT = 60.0 / BPM
 CHUNK_MS = 100
+# Scenario options, set from the command line in main().
+OPTS = argparse.Namespace(fill=True, bpm2=None, switch_at=40.0, shift_ms=0.0, shift_at=30.0, sparse=0.0)
 STATE_DIR = Path(__file__).with_name("testserver-state")
 FMT = AudioFormat(sample_rate=SR, bit_depth=16, channels=CH, sample_type="int")
 
@@ -46,9 +56,9 @@ def synth_chunk(t0: float) -> bytes:
     """Render CHUNK_MS of the groove starting at song time t0 (seconds)."""
     n = SR * CHUNK_MS // 1000
     t = t0 + np.arange(n) / SR
-    beat_pos = t / BEAT                       # beats elapsed (float)
+    beat_pos = beats_at(t)                    # beats elapsed (float)
     beat_idx = np.floor(beat_pos).astype(int)
-    tb = (beat_pos - beat_idx) * BEAT         # seconds since the last beat
+    tb = (beat_pos - beat_idx) * BEAT         # seconds since the last beat (envelope time; fine at any tempo)
     bar = beat_idx // 4
     in_bar = beat_idx % 4
 
@@ -83,17 +93,46 @@ FILL_BARS = range(8, 10)
 FILL_EVERY = 16
 
 
+def switch_beat() -> int:
+    """Index of the first beat at the second tempo (or a huge number when there is none)."""
+    return math.ceil(OPTS.switch_at / BEAT) if OPTS.bpm2 else 1 << 30
+
+
+def beat_time(k: int) -> float:
+    """Song time of grid beat k, honouring the tempo change."""
+    k0 = switch_beat()
+    if k < k0:
+        return k * BEAT
+    return k0 * BEAT + (k - k0) * 60.0 / OPTS.bpm2
+
+
+def beats_at(t):
+    """Fractional beats elapsed at song time(s) t (numpy-friendly inverse of beat_time)."""
+    k0 = switch_beat()
+    t0 = k0 * BEAT
+    if not OPTS.bpm2:
+        return t / BEAT
+    return np.where(t < t0, t / BEAT, k0 + (t - t0) * OPTS.bpm2 / 60.0)
+
+
 def beats_between(t0: float, t1: float) -> list[tuple[float, bool]]:
-    """Song-time beats in [t0, t1): (time, is_downbeat), with the periodic fill applied."""
+    """Song-time beats in [t0, t1): (time, is_downbeat), with the scenario applied."""
     out = []
-    k = math.ceil((t0 - 0.2) / BEAT - 1e-9)   # widen the search: fill beats move by up to 0.18 s
-    while (k - 1) * BEAT < t1:
-        t, bar, in_bar = k * BEAT, k // 4, k % 4
-        if bar % FILL_EVERY in FILL_BARS:
+    # widen the search: scenario beats move by up to shift + 0.2 s
+    slack = 0.2 + OPTS.shift_ms / 1000
+    k = max(0, math.floor(float(beats_at(np.float64(t0 - slack)))) - 1)
+    while beat_time(k) - slack < t1:
+        t, bar, in_bar = beat_time(k), k // 4, k % 4
+        if OPTS.sparse and t < OPTS.sparse and k % 2:
+            k += 1
+            continue                           # sparse intro: every other beat only
+        if OPTS.fill and bar % FILL_EVERY in FILL_BARS:
             if in_bar == 2:
                 k += 1
                 continue                       # dropped beat
             t += 0.18 if in_bar % 2 else -0.12  # pushed off the grid
+        if OPTS.shift_ms and t >= OPTS.shift_at:
+            t += OPTS.shift_ms / 1000          # re-pushed list: same tempo, new phase
         if t0 <= t < t1:
             out.append((t, in_bar == 0))
         k += 1
@@ -202,8 +241,17 @@ class TestServer:
 
 
 async def main() -> None:
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8928
-    ts = TestServer(port)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("port", nargs="?", type=int, default=8928)
+    ap.add_argument("--no-fill", dest="fill", action="store_false")
+    ap.add_argument("--bpm2", type=float, default=None)
+    ap.add_argument("--switch-at", type=float, default=40.0)
+    ap.add_argument("--shift-ms", type=float, default=0.0)
+    ap.add_argument("--shift-at", type=float, default=30.0)
+    ap.add_argument("--sparse", type=float, default=0.0)
+    ap.parse_args(namespace=OPTS)
+    log.info("scenario: %s", vars(OPTS))
+    ts = TestServer(OPTS.port)
     await ts.start()
     await asyncio.Event().wait()
 
