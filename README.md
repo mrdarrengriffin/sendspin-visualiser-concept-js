@@ -52,7 +52,7 @@ avoids both issues; see the Sendspin integration doc.
 |---|---|
 | `src/lib/logo/geometry.ts` | the eight arcs, chains, constants and pure helpers: the part a port copies |
 | `src/lib/logo/index.ts` | the logo module: dash queue, per-shape colour, beat lock, `mountLogo()` |
-| `src/lib/beat/tempo.ts` | the beat clock: server beats, coasting, onset fallback |
+| `src/lib/beat/tempo.ts` | the beat clock: one sticky, confidence-weighted lock fed by server beats (onset fallback), coasting |
 | `src/lib/color.ts` | contrast, saturation, the palette policy |
 | `src/lib/sendspin/client.ts` | typed surface of the patched Sendspin client and its lazy loader |
 | `src/lib/sendspin/vendor/` | the patched `@sendspin/sendspin-js` bundle (adds visualizer and colour roles) |
@@ -75,5 +75,8 @@ Working against Music Assistant dev (aiosendspin 9.1.1) as of September 2026. Kn
 - Beats only exist for tracks Music Assistant's `smart_fades` analysis has processed, and only as far
   as its beat list goes; the client coasts on the measured tempo after that. Details in the beat
   sync doc.
+- The beat clock holds one lock and only replaces it for a rival tempo that stays steady for
+  several seconds, so fills and breakdowns are ridden through. A lock learned from a sparse intro
+  has low confidence and yields quickly once the drums arrive.
 - The onset tempo fallback is heuristic; octave errors are possible on ambiguous material.
 - The corner-rounding filter is the main rendering cost; the porting doc has numbers.

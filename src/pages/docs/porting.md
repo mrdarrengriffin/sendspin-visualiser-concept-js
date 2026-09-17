@@ -21,8 +21,10 @@ what to drop, and what it costs.
   drop past the exit, static block = the logo. That single mechanism gives you the logo, the flow,
   and the exact re-forming stop.
 - The beat lock formulas and the anchor rule. They are a few lines and platform-independent.
-- The tempo clock rules (regression over 12, trimmed-mean of gaps over the track, 25% discontinuity
-  cut, octave guard, coasting) if the source is Sendspin beats.
+- The tempo clock rules if the source is Sendspin beats: one sticky lock, judge each beat against
+  it, confidence-scaled pulls, replace only for 8 steady rival beats, coasting. The estimator
+  behind it (regression over 12, trimmed-mean of gaps over the track, 25% discontinuity cut) is
+  what feeds the period pull.
 
 ## Drop or simplify freely
 
