@@ -11,6 +11,13 @@ Scenarios for the beat clock (all off by default except the fill):
                             from N seconds on, every beat is pushed by this much at the same tempo
                             (a re-pushed, phase-shifted beat list: a phase relock)
   --sparse 10               only every other beat for the first N seconds (a sparse intro)
+  --half 30 45              only every other beat between the two times (a breakdown at half rate;
+                            the clock must keep the full tempo)
+  --gap 30 45               no beats at all between the two times, then the same grid again
+  --rit-at 50 --rit-rate 0.03 --rit-beats 12
+                            from N seconds each beat gap grows by this fraction for this many beats,
+                            then the beats stop for good (an end-of-track ritardando and fade; the
+                            audio keeps its tempo, only the schedule slows)
 """
 from __future__ import annotations
 
@@ -43,7 +50,10 @@ BPM = 120.0
 BEAT = 60.0 / BPM
 CHUNK_MS = 100
 # Scenario options, set from the command line in main().
-OPTS = argparse.Namespace(fill=True, bpm2=None, switch_at=40.0, shift_ms=0.0, shift_at=30.0, sparse=0.0)
+OPTS = argparse.Namespace(
+    fill=True, bpm2=None, switch_at=40.0, shift_ms=0.0, shift_at=30.0, sparse=0.0,
+    half=None, gap=None, rit_at=None, rit_rate=0.03, rit_beats=12,
+)
 STATE_DIR = Path(__file__).with_name("testserver-state")
 FMT = AudioFormat(sample_rate=SR, bit_depth=16, channels=CH, sample_type="int")
 
@@ -115,17 +125,46 @@ def beats_at(t):
     return np.where(t < t0, t / BEAT, k0 + (t - t0) * OPTS.bpm2 / 60.0)
 
 
+def rit_beat() -> int:
+    """Index of the first slowed beat of the ritardando (or a huge number when there is none)."""
+    return math.ceil(OPTS.rit_at / BEAT) + 1 if OPTS.rit_at is not None else 1 << 30
+
+
+def rit_extra(k: int) -> float | None:
+    """How much later than the grid beat k falls in the ritardando; None once the beats have stopped."""
+    k0 = rit_beat()
+    if k < k0:
+        return 0.0
+    n = k - k0 + 1
+    if n > OPTS.rit_beats:
+        return None
+    return sum(BEAT * ((1 + OPTS.rit_rate) ** i - 1) for i in range(1, n + 1))
+
+
 def beats_between(t0: float, t1: float) -> list[tuple[float, bool]]:
     """Song-time beats in [t0, t1): (time, is_downbeat), with the scenario applied."""
     out = []
-    # widen the search: scenario beats move by up to shift + 0.2 s
+    # widen the search: scenario beats move by up to shift + 0.2 s, plus the whole ritardando
     slack = 0.2 + OPTS.shift_ms / 1000
+    if OPTS.rit_at is not None:
+        slack += rit_extra(rit_beat() + OPTS.rit_beats - 1) or 0.0
     k = max(0, math.floor(float(beats_at(np.float64(t0 - slack)))) - 1)
     while beat_time(k) - slack < t1:
         t, bar, in_bar = beat_time(k), k // 4, k % 4
         if OPTS.sparse and t < OPTS.sparse and k % 2:
             k += 1
             continue                           # sparse intro: every other beat only
+        if OPTS.half and OPTS.half[0] <= t < OPTS.half[1] and k % 2:
+            k += 1
+            continue                           # half-rate section: every other slot, same grid
+        if OPTS.gap and OPTS.gap[0] <= t < OPTS.gap[1]:
+            k += 1
+            continue                           # no beats at all, then the same grid
+        extra = rit_extra(k)
+        if extra is None:
+            k += 1
+            continue                           # the beat list ended before the audio
+        t += extra                             # ritardando: each gap a little longer
         if OPTS.fill and bar % FILL_EVERY in FILL_BARS:
             if in_bar == 2:
                 k += 1
@@ -249,6 +288,11 @@ async def main() -> None:
     ap.add_argument("--shift-ms", type=float, default=0.0)
     ap.add_argument("--shift-at", type=float, default=30.0)
     ap.add_argument("--sparse", type=float, default=0.0)
+    ap.add_argument("--half", type=float, nargs=2, metavar=("FROM", "UNTIL"), default=None)
+    ap.add_argument("--gap", type=float, nargs=2, metavar=("FROM", "UNTIL"), default=None)
+    ap.add_argument("--rit-at", type=float, default=None)
+    ap.add_argument("--rit-rate", type=float, default=0.03)
+    ap.add_argument("--rit-beats", type=int, default=12)
     ap.parse_args(namespace=OPTS)
     log.info("scenario: %s", vars(OPTS))
     ts = TestServer(OPTS.port)

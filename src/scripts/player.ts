@@ -63,14 +63,25 @@ let lastColorTs: number | undefined;
 let lastPalette: Palette | null = null;
 
 // ------------------------------------------------------------------ beat clock
+// The logo only sees the clock once the lock is established (confidence >= 0.8); until then the
+// flow is loudness-driven. Once published it keeps following the lock, relocks included, even if
+// confidence dips, until the clock is reset (track change, seek, stream end).
+let published = false;
 const clock = new BeatClock({
   serverNowUs: () => player?.getCurrentServerTimeUs() ?? 0,
   onsetFallback: el.onsets.checked,
-  onClock: (out) => { if (el.lock.checked) logo.setBeatClock(out); },
-  onClear: () => logo.clearBeatClock(),
+  onClock: (out) => {
+    if (clock.established) published = true;
+    if (published && el.lock.checked) logo.setBeatClock(out);
+  },
+  onClear: () => { published = false; logo.clearBeatClock(); },
   log: (e) => blog(e.kind, e),
 });
 window.clock = clock;
+
+// Loudness -> flow speed, in units/s: 8 at silence, 80 at full scale, with the top flattened
+// (exponent 1.4) so loud passages do not race. energy is the smoothed loudness, 0..1.
+const speedForEnergy = (energy: number) => 8 + 72 * Math.pow(energy, 1.4);
 
 // ------------------------------------------------------------------ frame queue
 // Frames carry a server-clock "display at" timestamp; hold them until the player's time filter says
@@ -128,7 +139,8 @@ function apply(f: VisualizerFrame): void {
 // ------------------------------------------------------------------ per-frame
 function tick(): void {
   release();
-  if (streaming && el.react.checked) logo.setSpeed(8 + 120 * Math.pow(energy.v, 1.6));
+  clock.poll();
+  if (streaming && el.react.checked) logo.setSpeed(speedForEnergy(energy.v));
 
   const meta = lastState?.serverState?.metadata;
   if (meta?.progress && player) {
@@ -154,13 +166,15 @@ function tick(): void {
     const coast = clock.coastingMs > 3000 ? `  coasting ${Math.round(clock.coastingMs / 1000)}s` : '';
     const dissent = clock.dissent ? `  dissent ${clock.dissent}` : '';
     const est = clock.established ? ' est' : '';
-    el.beatText.textContent = `${clock.bpm.toFixed(1)} bpm (${clock.source})  conf ${clock.confidence.toFixed(2)}${est}${dissent}  relocks ${clock.relocks}/${clock.rephases}  lock ${logo.state.beat.on ? 'on' : 'off'}${coast}   ${paths}`;
+    const ev = clock.evidence !== 'none' ? `  ev ${clock.evidence}` : '';
+    const state = published ? 'locked' : 'provisional';
+    el.beatText.textContent = `${state} ${clock.bpm.toFixed(1)} bpm (${clock.source})  conf ${clock.confidence.toFixed(2)}${est}${ev}${dissent}  relocks ${clock.relocks}/${clock.rephases}  lock ${logo.state.beat.on ? 'on' : 'off'}${coast}   ${paths}`;
   } else {
     el.led.style.opacity = '0.15';
     const types = vizConfig?.types ?? [];
-    el.beatText.textContent = !streaming ? '' : types.includes('beat')
-      ? `server offers beats (${clock.beatsSeen} so far), waiting for a steady tempo`
-      : `server offers: ${types.join(', ') || 'nothing'}  (no beat schedule for this track)`;
+    el.beatText.textContent = !streaming ? '' : types.includes('beat') || el.onsets.checked
+      ? `searching  (${clock.beatsSeen} beats, ${peaksSeen} peaks so far${types.includes('beat') ? '' : ', onsets only'})`
+      : `server offers: ${types.join(', ') || 'nothing'}  (no beat schedule for this track, onset fallback off)`;
   }
   drawLane(now, alive);
   el.viz.textContent = streaming
@@ -309,8 +323,13 @@ el.debug.addEventListener('change', () => { if (!el.debug.checked) { el.markers.
 el.mode.addEventListener('click', () => { logo.toggleMode(); el.mode.textContent = logo.state.mode === 'joined' ? 'offset view' : 'joined view'; });
 el.guides.addEventListener('click', () => logo.showGuides(!logo.svg.classList.contains('show-guides')));
 
-// dashes per beat, one value per path (0-4); paths 0 and 2 run on half-beats by default
-const applyDivs = () => logo.setPathBeatDivs(el.divs.value.split(/[,\s]+/).map((v) => +v || null));
+// dashes per beat, one value per path (0-4); by default the two long chains (paths 0 and 2) carry
+// one dash per two beats and the others one per beat
+const DEFAULT_DIVS = '0.5,1,0.5,1,1';
+const applyDivs = () => {
+  if (!el.divs.value.trim()) el.divs.value = DEFAULT_DIVS;
+  logo.setPathBeatDivs(el.divs.value.split(/[,\s]+/).map((v) => +v || null));
+};
 el.divs.addEventListener('change', applyDivs);
 applyDivs();
 

@@ -57,93 +57,119 @@ the old spacing (one traversal of settle). This is deliberate; re-timing visible
 
 ## The beat clock (`src/lib/beat/tempo.ts`, class `BeatClock`)
 
-The clock is **sticky**. It holds one lock, `{ period, anchor, source, confidence }`, and treats
-every new piece of evidence as a claim to be tested against that lock rather than as a new answer.
-The governing idea: a lock is only ever moved by evidence that **agrees with itself**. One odd beat
-proves nothing; a run of beats that form their own steady grid does.
+The clock is **sticky**, and the **quality of the evidence, not the confidence of the lock, decides
+how fast it moves**. It holds one lock, `{ period, anchor, source, confidence }`, and tests every
+server beat against it. One odd beat proves nothing; a run of beats that agree with each other
+moves any lock, however confident. A run that agrees with the lock, or contradicts nothing (half
+rate, a gap, a ritardando), holds it.
 
-**Confidence** (0..1) is earned, +0.06 per on-grid beat. A first lock starts at 0.3, so about nine
+**First lock, at once.** Detection starts with the first beat and never idles. Three beats whose two
+gaps agree within 10% at a plausible tempo (57–200 BPM) give a provisional lock at confidence 0.3,
+refined by every beat after. While nothing is locked the log carries `searching` at most once a
+second (`via: beats | onsets`); the onset fallback, when it applies, is scored every second
+whether or not new onsets arrive (`poll()`).
+
+**Confidence** (0..1) is earned, +0.06 per agreeing beat. A first lock starts at 0.3, so about nine
 agreeing beats make it **established** (`confidence ≥ 0.8`, the `established` getter, `est` in the
-player's debug line). Established is the mode the clock should spend a whole track in:
+debug line). Confidence is not a wall against evidence. It does four things:
 
 | | young (c < 0.8) | established (c ≥ 0.8) |
 |---|---|---|
-| phase pull per on-grid beat | 0.2 + 0.4·(1 − c) of the error (0.6 → 0.28) | 0.1 |
-| period steering | 12-beat estimate, pull 0.1 + 0.3·(1 − c) | whole-track estimate only, pull 0.1 |
-| isolated off-grid beat | confidence ×0.92, coast | **ignored**, coast |
-| off-grid beat inside a rival run | ×0.85 | ×0.85 |
-| on-grid beat while a rival run exists | no gain | no gain |
+| phase pull per agreeing beat | 0.2 + 0.4·(1 − c) of the error (0.6 → 0.28) | 0.1 |
+| period steering | toward the 12-beat fit, pull 0.1 + 0.3·(1 − c) | toward the whole-track estimate when it agrees with the recent run within 1%, else the run's mean gap; pull 0.1 |
+| incoherent off-grid beat | confidence ×0.92 | ignored |
 | coasting when beats stop | 30 s, then the lock is dropped | for the rest of the track |
+| published to the logo | **no**: the flow stays loudness-driven | **yes**, and it stays published until the clock is reset |
 
-Silence is never evidence: an established lock is only lowered by contradicting beats, never by
-their absence.
+**The clock is published to the logo only once established.** The player calls `setBeatClock` for
+the first time when `established` turns true (about 4.5 s into a steady 120 BPM track) and keeps
+calling it for every later update, relocks included, even if confidence dips below 0.8 again; a
+reset (track change, seek, stream end) unpublishes. The debug line reads `searching`,
+`provisional 120.0 bpm` or `locked 120.0 bpm`. Silence is never evidence: a lock is only lowered by
+contradicting beats, never by their absence.
 
-**The steady run.** The clock remembers the most recent consecutive beats (up to 16) whose gaps all
-agree within 10% of their median; a gap outside that restarts the run. Each beat in it is tagged
-on-grid or off-grid (`|e| < 0.2·period` against the lock). The run is a **rival** when it holds at
-least **K = 4** beats and at least half of them are off-grid. K = 4 is one bar: three agreeing
-gaps is the shortest sequence that cannot be produced by a pushed pair of beats in a fill, and a
-whole bar on another grid is the shortest thing that sounds like a new tempo rather than
-syncopation. The half rule (not "all off-grid") is because a genuinely different tempo still lands
-on the old grid now and then (6:5, 4:3, 2:1 ratios), while a half-tempo run (every beat on-grid)
-is never a rival: octaves are handled by the divisions, not the lock.
+### Evidence classes
 
-Two things can then happen, in this order:
+Each arriving beat is tagged on-grid or off-grid (`|e| < 0.2·period` against the lock, `e` the
+distance to the nearest grid time), and the last **eight** beats (two bars of 4/4: long enough to
+hold a fill and its recovery, short enough that a section change fills it in a few seconds) are
+classified. The class is `evidence` on the clock, `ev` in the debug line and on every `tempo`,
+`dissent` and `drift` log entry.
 
-1. **Phase relock.** If the last K beats are all off-grid, their mean gap is the locked period
-   within 4%, and their offsets agree within 10% of a period, the grid has moved but the tempo has
-   not (a beat list re-pushed after a pause or re-anchor, quantised to the 20 ms chunk). Re-anchor
-   at once onto their mean offset; keep the period and the confidence; `rephases++`; the logo eases
-   the shift over its usual one second. Logged as `lock` with `why: "phase relock …"` and `shiftMs`.
-2. **Tempo relock.** A rival run of at least **8** beats spanning at least **3 s · (1 + 2c)** (3 s
-   when unsure, 9 s when sure) replaces the lock with its mean gap and last beat, at confidence 0.4;
-   `relocks++`. The span shrinks as the rival costs confidence (×0.85 per off-grid beat), so an
-   established lock yields to a steady new tempo in about 6–7 s and to nothing shorter. The
-   whole-track window restarts from the run.
+- The **run** is the longest tail of the window whose consecutive gaps agree with their median
+  within **6%** (or 24 ms if that is larger: Music Assistant quantises beat times to its 20 ms audio
+  chunks, so a 450 ms beat arrives as 440/460). Four beats make it evidence.
+- `drift` — the window's most recent gaps change in one direction step after step: at least
+  **three** consecutive gap changes with the same sign, each more than 0.5% of the median (one 20 ms
+  chunk step counts, jitter does not), with no step back. A ritardando or accelerando. Tested on the
+  whole window before anything else. A single jump followed by flat gaps has one significant step:
+  that is a tempo change, not a drift. (A 2%-per-beat threshold was tried and missed 1.5%-per-beat
+  slowdowns, which then relocked every six beats.)
+- `half` — the run's mean gap is **2× the locked period within 6%** and every beat in it is on the
+  grid: the server is skipping every other slot; the grid still fits.
+- `coherent` — a run of at least four beats at a plausible tempo. Either at the **same period**
+  (mean gap within 4% of the lock) or at a **new period**.
+- `incoherent` — anything else: fills, syncopation, dropped beats, or fewer than four coherent
+  beats yet.
 
-Every `dissent` log entry carries `offMs`, the run length, how many of its beats are off-grid,
-whether it is a rival and its BPM, so a `dumpLog()` shows which case a real track produced.
+### Rules
+
+| evidence | action |
+|---|---|
+| coherent, same period, beat on-grid | **track**: re-anchor at the beat's slot pulled toward it by the table's rate, steer the period, +0.06 confidence, `dissent = 0` |
+| coherent, same period, beat off-grid | **phase relock** once the last 4 beats are all off-grid with offsets agreeing within 10% of a period: re-anchor onto their mean offset at once, keep period and confidence, `rephases++` (logged `lock`, `why: "phase relock …"`, `shiftMs`). Otherwise hold. |
+| coherent, new period | **hold**, then **tempo relock** once the run has **6 beats spanning ≥ 2 s** (a bar and a half; one 4/4 fill bar cannot do it): adopt its mean gap and last beat at confidence **0.5**, `relocks++`, the short and whole-track histories restart from the run. Independent of confidence. Never onto half the tempo. Double is allowed: beats between our slots mean the grid is missing them (a sparse intro). |
+| half | **agreement**: pull the phase, earn confidence, never steer the period from those gaps. Octaves are the divisions' job. |
+| drift | **hold everything**: no pulls, no confidence change, no candidate; logged as `drift` with the window's gaps |
+| incoherent, beat on-grid | pull and earn as an agreeing beat (a fill's beats that happen to land on the grid) |
+| incoherent, beat off-grid | hold; a young lock loses ×0.92 |
+| no beats | coast at the locked period; young 30 s, established for the rest of the track |
 
 ### From Sendspin beats (preferred)
 
 Music Assistant sends `beat` frames with server-clock timestamps, about 3 s ahead, quantised to the
-20 ms audio chunk grid (so consecutive gaps alternate, e.g. 440/460 for a 450 ms beat). The player
-releases each frame when the server clock reaches its timestamp, then:
+20 ms audio chunk grid. The player releases each frame when the server clock reaches its timestamp,
+then:
 
-1. **Estimate.** Keep the last 12 timestamps and, for the track, all of them (max 600). If a gap in
-   the short window deviates > 25% from its median, use only what follows it (missed beat, or a
-   schedule re-anchored after a seek). Short estimate: least-squares fit `t_i = a + P·i`. Long
+1. **Remember.** Keep the last 12 timestamps and, for the track, all of them (max 600). Short
+   estimate: least-squares fit `t_i = a + P·i` over the 12, using only what follows any gap that
+   deviates > 25% from the window's median (missed beat, schedule re-anchored after a seek). Long
    estimate once ≥ 24 beats: trimmed mean of gaps (within ±15% of median). Never line-fit the long
    window: a re-pushed schedule adds an offset that biases it.
-2. **First lock** from the first short estimate (three beats), confidence 0.3.
-3. **Judge each beat against the lock.** Phase error `e` = distance from the nearest grid time.
-   Update the steady run. If `|e| < 0.2·period` the beat is on-grid: re-anchor at that grid slot
-   pulled toward the beat by the table's rate, steer the period (young: toward the short estimate
-   if within 4%; established: toward the long estimate if within 4%), earn confidence unless a
-   rival run exists, clear `dissent`. Otherwise `dissent++`, try the phase relock, else coast and
-   apply the table's cost.
-4. **Replace** only by the tempo relock rule above.
-5. Publish: next grid time ≥ now from the anchor, converted server→local
-   (`local = now + (ts − serverNow)/1000`), to `setBeatClock`.
+2. **First lock** from three beats whose gaps agree within 10% (period from the short fit when it
+   has enough beats), confidence 0.3.
+3. **Judge each beat against the lock**: update the run, classify the window, apply the rules
+   table. Every `dissent` entry carries `ev`, `offMs`, the run length, how many of its beats are
+   off-grid and its BPM, so a `dumpLog()` shows which case a real track produced.
+4. Publish: next grid time ≥ now from the anchor, converted server→local
+   (`local = now + (ts − serverNow)/1000`), to `setBeatClock`, once established.
 
 **Coasting.** An established lock, or one with ≥ 24 beats of history, runs for the rest of the
 track when beats stop; a younger one coasts 30 s. Track change, seek (`stream/clear`) and stream end
 drop the lock.
 
-Measured on the test server (`tools/testserver.py`, 120 BPM, options in its docstring):
+Measured on the test server (`tools/testserver.py`, 120 BPM, options in its docstring; times are
+from the scenario event):
 
-- *Fill* (two bars in every sixteen pushed off the grid, one beat dropped): confidence 1.00 before,
-  during and after; `dissent` counted 1→5 and back to 0; relocks 0; all paths 0 ms throughout.
+- *Fill* (two bars in every sixteen pushed off the grid, one beat dropped): `ev incoherent` during
+  the fill, confidence 1.00 before, during and after; `dissent` counted 1→5 and back to 0; relocks
+  0; all paths 0 ms throughout.
+- *Tempo change* (`--bpm2 100 --switch-at 40 --no-fill`): coherent dissent from the 4th new beat,
+  relock to 100.0 BPM on the 6th, **3.6 s** after the switch (was 6.6 s); confidence 0.5,
+  established 3.4 s later; 0 ms errors within 4 s of the relock.
 - *Phase shift* (`--shift-ms 200 --shift-at 30`): phase relock on the 4th shifted beat, 1.5 s after
-  the shift, `shiftMs: 200`; confidence stayed 1.00, relocks 0, paths back to 0 ms within ~2 s.
-- *Tempo change* (`--bpm2 100 --switch-at 40 --no-fill`): rival from the 4th beat, confidence
-  1.00 → 0.44 over the next seven, relock to 100.0 BPM after 11 steady beats, 6.6 s after the switch;
-  established again 8 s later; 0 ms errors from then on.
-- *Sparse intro* (`--sparse 10 --no-fill`, every other beat for 10 s): first lock at 60 BPM; when
-  the drums arrive every other beat is off-grid, the run is a rival, and the clock relocks to
-  120 BPM once the run spans the confidence-scaled minimum: 5.0 s after the drums start (12 steady
-  beats, 6 off-grid), and 5.5 s when the intro was long enough to establish the 60 BPM lock at
-  1.00 first.
+  the shift, `shiftMs: 200`; confidence stayed 1.00, relocks 0, paths eased back to 0 ms within 3 s.
+- *Halving* (`--half 30 45`, every other beat for 15 s): `ev half` from the 4th half-rate beat;
+  120 BPM throughout, relocks 0, rephases 0, confidence 1.00, 0 ms errors before, during and after.
+- *Gap* (`--gap 30 45`, no beats for 15 s): coasted 15 s at 120 BPM; on resume the beats were on
+  the grid at once, relocks 0, 0 ms errors.
+- *Ritardando* (`--rit-at 50 --rit-rate 0.03 --rit-beats 12`, then no more beats): `ev drift` from
+  the third slowed beat (gaps 515/530/546 ms) to the last (713 ms); 120 BPM, confidence 1.00,
+  relocks 0, 0 ms errors, then coasting for the rest of the track.
+- *Sparse intro* (`--sparse 10 --no-fill`, every other beat for 10 s): first lock at 60 BPM after
+  three sparse beats (not published: never established); when the drums arrive the run is coherent
+  at twice the rate and the clock relocks to 120 BPM on the 6th drum beat, 1.5 s after they start,
+  whatever the 60 BPM lock's confidence was; established and published 3 s later.
 
 ### From onsets (fallback, when the server has no beats)
 
@@ -153,10 +179,11 @@ Every `peak` frame is an onset with a strength. Every second, score candidate pe
 outside); ignore scores below 0.5. First lock when two consecutive estimates agree within 3%, with
 confidence from the clustering score. Afterwards each estimate is judged against the lock like a
 beat (period within 4%, phase within 0.2·period): agreement pulls and earns confidence (double for
-scores ≥ 0.75). Dissent follows the beat rule: a young lock loses ×0.92 per dissenting estimate and
-is replaced by 2 consecutive estimates that agree with each other (periods within 3%); an
-established one ignores dissent unless 4 consecutive estimates agree, which replaces it. Server beats always take precedence: if the stream offers `beat`, or a server
-lock exists, onsets are ignored.
+scores ≥ 0.75). Dissent follows the beat idea (only coherent dissent moves the lock): a young lock loses ×0.92
+per dissenting estimate and is replaced by 2 consecutive estimates that agree with each other
+(periods within 3%); an established one ignores dissent unless 4 consecutive estimates agree, which
+replaces it. Server beats always take precedence: if the stream offers `beat`, or a server lock
+exists, onsets are ignored. Like a server lock, an onset lock reaches the logo only once established.
 
 Measured: on a clear-pulse track it locked at the correct 123 BPM with scores 0.73–0.93. Start-up
 needs 6 onsets and two agreeing estimates, about 4 s of clear beat. Octave errors are possible on

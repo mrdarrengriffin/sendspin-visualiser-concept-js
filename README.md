@@ -52,7 +52,7 @@ avoids both issues; see the Sendspin integration doc.
 |---|---|
 | `src/lib/logo/geometry.ts` | the eight arcs, chains, constants and pure helpers: the part a port copies |
 | `src/lib/logo/index.ts` | the logo module: dash queue, per-shape colour, beat lock, `mountLogo()` |
-| `src/lib/beat/tempo.ts` | the beat clock: one sticky lock fed by server beats (onset fallback), moved only by self-consistent runs, coasting |
+| `src/lib/beat/tempo.ts` | the beat clock: one sticky lock fed by server beats (onset fallback); the last eight beats are classed coherent / half / drift / incoherent and only coherent runs move it; coasting |
 | `src/lib/color.ts` | contrast, saturation, the palette policy |
 | `src/lib/sendspin/client.ts` | typed surface of the patched Sendspin client and its lazy loader |
 | `src/lib/sendspin/vendor/` | the patched `@sendspin/sendspin-js` bundle (adds visualizer and colour roles) |
@@ -64,8 +64,9 @@ avoids both issues; see the Sendspin integration doc.
 ## Player controls
 
 react (loudness → speed), pulse, flash, spectrum (all opt-in), sat (palette saturation), beat
-lock, onset tempo (fallback when the server sends no beats), divs (dashes per beat per path, e.g.
-`2,1,0.5,1,4`), offset (visual beat offset in ms), debug (palette strip, tempo line, beat lane),
+lock, onset tempo (fallback when the server sends no beats), divs (dashes per beat per path,
+default `0.5,1,0.5,1,1`: the two long chains carry one dash per two beats), offset (visual beat
+offset in ms), debug (palette strip, tempo line, beat lane),
 markers (numbered entry/exit rings per path), joined/offset view, guides.
 
 ## Status
@@ -75,10 +76,11 @@ Working against Music Assistant dev (aiosendspin 9.1.1) as of September 2026. Kn
 - Beats only exist for tracks Music Assistant's `smart_fades` analysis has processed, and only as far
   as its beat list goes; the client coasts on the measured tempo after that. Details in the beat
   sync doc.
-- The beat clock holds one lock. Once established (about nine agreeing beats) it ignores isolated
-  off-grid beats outright, re-phases at once for a beat list that comes back shifted at the same
-  tempo, and only changes tempo for a rival run of beats that stays steady for several seconds; it
-  coasts for the rest of the track when beats stop. A lock learned from a sparse intro has low
-  confidence and yields quickly once the drums arrive.
+- The beat clock holds one lock and lets the quality of the evidence, not its own confidence,
+  decide how fast it moves: it locks provisionally on three consistent beats, is published to the
+  logo only once established (about nine agreeing beats), re-phases after one bar of consistently
+  shifted beats, relocks after six coherent beats spanning two seconds at another tempo (however
+  confident it was), and holds through half-rate sections, gaps and ritardandos, coasting for the
+  rest of the track when beats stop. The beat-sync doc has the classes and numbers.
 - The onset tempo fallback is heuristic; octave errors are possible on ambiguous material.
 - The corner-rounding filter is the main rendering cost; the porting doc has numbers.

@@ -3,11 +3,15 @@
  * and a phase reference for the logo's beat lock. Pure logic, no DOM; times are server-clock
  * microseconds in, local milliseconds (performance.now) out. See docs/beat-sync.
  *
- * The clock is sticky. Once a tempo is locked, each new piece of evidence is tested against the
- * lock. While the lock is young it adapts fast. Once it is established (confidence >= 0.8) it
- * only eases, ignores isolated off-grid beats entirely, and is only moved by a run of beats that
- * agree with each other: same period with one offset -> re-phase at once; a different period ->
- * lose confidence and, once the run has lasted long enough, relock to it.
+ * The clock is sticky, and the quality of the evidence, not the confidence of the lock, decides
+ * how fast it moves. Each server beat is judged against the lock, and the last eight beats are
+ * classified: `coherent` (steady gaps at a plausible tempo), `half` (steady at twice the locked
+ * period, on the grid), `drift` (gaps growing or shrinking beat after beat: a ritardando or
+ * accelerando) or `incoherent` (fills, syncopation, missing beats). Coherent beats on the grid
+ * track; coherent beats at the same period with a new phase re-phase after one bar; coherent beats
+ * at a different period relock after six beats spanning two seconds, however confident the lock;
+ * half, drift and incoherent evidence hold the lock. Confidence only scales how hard one on-grid
+ * beat pulls and how long a young lock coasts.
  */
 
 export interface BeatClockOutput {
@@ -18,6 +22,15 @@ export interface BeatClockOutput {
 }
 
 export type TempoSource = 'none' | 'server' | 'onsets';
+
+/**
+ * What the last eight server beats look like as a body of evidence.
+ * - `coherent`: gaps agree within EV_COHERENT of their median at a plausible tempo
+ * - `half`: coherent at twice the locked period, every beat on the grid (a breakdown, a half-time feel)
+ * - `drift`: gaps growing or shrinking beat after beat (a ritardando or accelerando)
+ * - `incoherent`: anything else (fills, syncopation, dropped beats, too few beats yet)
+ */
+export type EvidenceClass = 'none' | 'coherent' | 'half' | 'drift' | 'incoherent';
 
 export interface TempoLogEntry {
   t: number;
@@ -46,14 +59,14 @@ interface Lock {
   /** Consecutive pieces of evidence that disagreed with the lock. */
   dissent: number;
   /**
-   * 0..1, earned by evidence. Agreement raises it; only coherent disagreement (a rival run)
-   * lowers it once the lock is established. A young lock (a sparse intro, a weak onset guess)
-   * adapts fast and is easy to replace; an established one moves slowly and rides through fills.
+   * 0..1, earned by agreeing beats. It scales how hard one on-grid beat pulls (a young lock from
+   * a sparse intro or a weak onset guess adapts fast; an established one only eases) and how long
+   * a lock coasts without beats. It is never a wall: coherent evidence moves any lock.
    */
   confidence: number;
 }
 
-/** One beat as remembered in the steady run: its time and how it sat against the lock. */
+/** One beat as remembered in the coherent run: its time and how it sat against the lock. */
 interface RunBeat {
   ts: number;
   /** Signed phase error against the lock at the time, µs, wrapped to ±period/2. */
@@ -62,37 +75,82 @@ interface RunBeat {
   off: boolean;
 }
 
-// Windows and thresholds. All periods in µs unless noted.
-const SHORT_WINDOW = 12;
-const LONG_WINDOW = 600;
-const LONG_MIN = 24;
-const PERIOD_MIN = 250_000, PERIOD_MAX = 1_500_000;
-const AGREE_PERIOD = 0.04;     // period within 4% of the lock counts as agreeing
-const AGREE_PHASE = 0.2;       // beat within 20% of a period from the grid counts as agreeing
+// Windows and thresholds. All periods in µs unless noted. One line of justification each.
+const SHORT_WINDOW = 12;       // beats in the least-squares tempo fit for first locks and young steering
+const LONG_WINDOW = 600;       // whole-track history for the trimmed-mean period (10 min at 60 BPM)
+const LONG_MIN = 24;           // beats before the whole-track estimate is trusted
+const PERIOD_MIN = 300_000, PERIOD_MAX = 1_050_000;   // plausible tempos, 200 down to ~57 BPM
+const AGREE_PERIOD = 0.04;     // a period within 4% of the lock is the same tempo (the pull closes the rest)
+const AGREE_PHASE = 0.2;       // a beat within 20% of a period of its slot is on-grid (a 16th note is 25%)
 const ESTABLISHED = 0.8;       // confidence from which the lock is established (~9 agreeing beats after a first lock)
-const CONF_GAIN = 0.06;        // per agreeing beat (not while a rival run is present)
-const CONF_LOSS_LOOSE = 0.92;  // per off-grid beat while not established (~8 to halve)
-const CONF_LOSS_RIVAL = 0.85;  // per off-grid beat that belongs to a rival run (~4 to halve)
-// The steady run: the most recent consecutive beats whose gaps agree within 10% of their median.
-const RUN_MAX = 16;
-const RUN_STEADY = 0.1;
-// K: a steady run of at least this many beats, at least half of them off-grid, is a rival.
-const RIVAL_MIN = 4;
-// Phase relock: K consecutive off-grid beats at the locked period (mean gap within AGREE_PERIOD)
-// whose offsets agree within 10% of a period are the same tempo with a new phase.
+const CONF_GAIN = 0.06;        // per agreeing beat
+const CONF_LOSS_LOOSE = 0.92;  // per incoherent off-grid beat while not established (~8 to halve)
+// Evidence window: the last eight beats, two bars of 4/4, long enough to hold a fill and its
+// recovery yet short enough that a section change fills it within a few seconds.
+const EV_WINDOW = 8;
+// Coherent: consecutive gaps within 6% of their median (or one 20 ms chunk, whichever is larger:
+// Music Assistant quantises beat times to its 20 ms audio chunks, so a 450 ms beat arrives as
+// 440/460). The run is the longest coherent tail of the window; RUN_MIN beats make it evidence.
+const EV_COHERENT = 0.06;
+const EV_QUANT_US = 24_000;
+const RUN_MIN = 4;
+// Drift: at least three consecutive gap changes in the same direction with no step back, each
+// bigger than 0.5% of the median (so one quantisation step counts and jitter does not). A single
+// jump followed by flat gaps is a tempo change, not a drift. A 2%-per-beat threshold was tried
+// and missed 1.5%-per-beat ritardandos, which then relocked every six beats.
+const DRIFT_STEPS = 3;
+const DRIFT_STEP = 0.005;
+// Half: a coherent run whose period is twice the lock's, within 6%, all beats on-grid: the server
+// is skipping every other slot, the grid still fits. Octaves are the divisions' job.
+const HALF_TOL = 0.06;
+// Phase relock: RUN_MIN consecutive off-grid beats at the locked period (mean gap within
+// AGREE_PERIOD) whose offsets agree within 10% of a period are the same tempo with a new phase.
 const PHASE_SPREAD = 0.1;
-// Tempo relock: a rival run of at least 8 beats spanning 3 s (unsure) to 9 s (sure).
-const RELOCK_BEATS = 8;
-const relockSpanUs = (c: number) => 3_000_000 * (1 + 2 * c);
-// Pull rates. Established: small and constant. Below that they scale with confidence c.
+// Tempo relock: a coherent run of at least 6 beats (a bar and a half) spanning at least 2 s (so a
+// single 4/4 fill bar cannot flip it) at a period outside AGREE_PERIOD that is not half the tempo.
+// Independent of confidence; the new lock starts at 0.5 because the evidence was coherent.
+const RELOCK_BEATS = 6;
+const RELOCK_SPAN_US = 2_000_000;
+const RELOCK_CONFIDENCE = 0.5;
+// Period steering: the whole-track estimate is used when it agrees with the recent run within 1%
+// (a steady track, where its precision wins); otherwise the run's mean gap (the tempo moved a little).
+const STEER_LONG_TOL = 0.01;
+// Pull rates per on-grid beat. Established: small and constant. Below that they scale with c.
 const PULL_PHASE_FIRM = 0.1, PULL_PERIOD_FIRM = 0.1;
 const pullPeriodLoose = (c: number) => 0.1 + 0.3 * (1 - c);   // 0.4 when unsure
 const pullPhaseLoose = (c: number) => 0.2 + 0.4 * (1 - c);    // 0.6 when unsure
-const FLYWHEEL_SHORT_MS = 30000;
+const FLYWHEEL_SHORT_MS = 30000;  // a young lock coasts this long without beats; an established one for the track
+// First lock: three beats whose two gaps agree within 10% at a plausible tempo. Provisional
+// (confidence 0.3), refined by every beat after; the player publishes it only once established.
+const FIRST_LOCK_BEATS = 3;
+const FIRST_LOCK_TOL = 0.1;
+const SEARCH_LOG_MS = 1000;       // `searching` log entries at most this often while nothing is locked
+const ONSET_VOTES_FIRM = 4, ONSET_VOTES_LOOSE = 2;  // agreeing onset estimates that replace a lock
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[xs.length >> 1];
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
 const gapsOf = (ts: number[]) => ts.slice(1).map((t, i) => t - ts[i]);
+
+/**
+ * Drift: the most recent gaps change in one direction, step after step. Walk back from the last
+ * gap while the steps keep the sign (steps within DRIFT_STEP of flat are allowed either way, so a
+ * quantised ramp still counts); drift if DRIFT_STEPS of them are significant. One jump followed by
+ * flat gaps (a tempo change) has one significant step and is not drift.
+ */
+const isDrifting = (gaps: number[]): boolean => {
+  if (gaps.length < DRIFT_STEPS + 1) return false;
+  const tol = DRIFT_STEP * median(gaps);
+  for (const sign of [1, -1]) {
+    let significant = 0;
+    for (let i = gaps.length - 1; i > 0; i--) {
+      const step = (gaps[i] - gaps[i - 1]) * sign;
+      if (step < -tol) break;
+      if (step > tol) significant++;
+    }
+    if (significant >= DRIFT_STEPS) return true;
+  }
+  return false;
+};
 
 export class BeatClock {
   period = 0;            // µs (of the lock)
@@ -106,6 +164,8 @@ export class BeatClock {
   relocks = 0;
   /** Phase relocks: same period, re-anchored onto a consistently shifted run. */
   rephases = 0;
+  /** Evidence class of the last eight server beats, refreshed as each one arrives. */
+  evidence: EvidenceClass = 'none';
   /** Whether the server's stream currently includes the `beat` type. */
   serverOffersBeats = false;
   /** Use onsets to guess the tempo when the server sends no beats. */
@@ -118,6 +178,7 @@ export class BeatClock {
   private onsets: { ts: number; w: number; wr?: number }[] = [];
   private onsetVotes: { P: number; next: number; t: number; score: number }[] = [];
   private lastOnsetEstimate = 0;
+  private lastSearchLog = 0;
   private readonly now: () => number;
 
   constructor(private readonly opts: BeatClockOptions) {
@@ -149,7 +210,7 @@ export class BeatClock {
     return this.lock?.confidence ?? 0;
   }
 
-  /** Established: confidence >= 0.8. Ignores isolated off-grid beats and only eases. */
+  /** Established: confidence >= 0.8. Only eases on agreeing beats and coasts for the rest of the track. */
   get established(): boolean {
     return (this.lock?.confidence ?? 0) >= ESTABLISHED;
   }
@@ -157,7 +218,7 @@ export class BeatClock {
   /** Drop everything: new track, seek, stream end. */
   reset(reason: string): void {
     this.ts = []; this.all = []; this.run = []; this.onsets = []; this.onsetVotes = [];
-    this.lock = null; this.period = 0; this.bpm = 0; this.source = 'none';
+    this.lock = null; this.period = 0; this.bpm = 0; this.source = 'none'; this.evidence = 'none';
     this.log('reset', { reason });
     this.opts.onClear?.();
   }
@@ -175,19 +236,51 @@ export class BeatClock {
     this.lastBeatLocal = this.now();
 
     if (this.lock && this.lock.source === 'server') this.judgeAgainstLock(timestampUs);
-    else if (this.lock && this.lock.source === 'onsets') {
-      // server beats outrank an onset lock: take the first estimate they can provide
-      const est = this.estimateFromBeats();
-      if (est) this.adopt(est.periodUs, est.lastBeatUs, 'server', 'server beats replace onset lock');
-    } else {
-      const est = this.estimateFromBeats();
-      if (est) this.adopt(est.periodUs, est.lastBeatUs, 'server', 'first lock');
+    else {
+      // No lock, or an onset lock (server beats outrank it): lock provisionally on the first
+      // three consistent beats and refine from there.
+      const est = this.firstEstimate();
+      if (est) this.adopt(est.periodUs, est.lastBeatUs, 'server', this.lock ? 'server beats replace onset lock' : 'first lock');
+      else this.searching('beats');
     }
   }
 
   /**
-   * Test one beat against the locked grid. On-grid: pull. Off-grid: coast. Either way, keep the
-   * steady run up to date and see whether it has become a rival (a new phase or a new tempo).
+   * Call once a frame. Keeps the search running while nothing is locked: the onset estimate
+   * every second when the server sends no beats, and a `searching` log line otherwise.
+   */
+  poll(): void {
+    if (this.lock || (this.ts.length === 0 && this.onsets.length === 0)) return;
+    if (this.onsetFallback && !this.serverOffersBeats) {
+      if (this.now() - this.lastOnsetEstimate >= 1000) this.onsetStep();
+    } else if (this.serverOffersBeats) this.searching('beats');
+  }
+
+  /** Detection is running but nothing is locked yet; logged at most once a second. */
+  private searching(via: string): void {
+    const now = this.now();
+    if (now - this.lastSearchLog < SEARCH_LOG_MS) return;
+    this.lastSearchLog = now;
+    this.log('searching', { via, beats: this.ts.length, onsets: this.onsets.length });
+  }
+
+  /**
+   * A provisional first lock: the last three beats' gaps agree within 10% at a plausible tempo.
+   * The period comes from the 12-beat fit when it has enough beats, else from those two gaps.
+   */
+  private firstEstimate(): { periodUs: number; lastBeatUs: number } | null {
+    const last = this.ts.slice(-FIRST_LOCK_BEATS);
+    if (last.length < FIRST_LOCK_BEATS) return null;
+    const [g1, g2] = gapsOf(last);
+    const P = (g1 + g2) / 2;
+    if (Math.abs(g1 - g2) > FIRST_LOCK_TOL * P || P < PERIOD_MIN || P > PERIOD_MAX) return null;
+    return this.estimateFromBeats() ?? { periodUs: P, lastBeatUs: last[last.length - 1] };
+  }
+
+  /**
+   * Test one beat against the locked grid, classify the recent evidence, and act on the class:
+   * coherent on-grid tracks, coherent with a new phase re-phases, coherent at a new period relocks,
+   * half is agreement, drift and incoherent hold (an incoherent on-grid beat still pulls).
    */
   private judgeAgainstLock(ts: number): void {
     const lock = this.lock!;
@@ -197,55 +290,92 @@ export class BeatClock {
     const off = Math.abs(e) >= AGREE_PHASE * lock.periodUs;
     const firm = lock.confidence >= ESTABLISHED;
 
-    // The steady run: broken by a gap that disagrees with the run's gaps by more than 10%.
+    // The coherent run: broken by a gap that disagrees with the run's median gap.
     if (this.run.length >= 2) {
       const last = this.run[this.run.length - 1].ts;
       const med = median(gapsOf(this.run.map((b) => b.ts)));
-      if (Math.abs((ts - last) / med - 1) > RUN_STEADY) this.run = [];
+      if (Math.abs(ts - last - med) > Math.max(EV_COHERENT * med, EV_QUANT_US)) this.run = [];
     }
-    this.run.push({ ts, e, off }); if (this.run.length > RUN_MAX) this.run.shift();
+    this.run.push({ ts, e, off }); if (this.run.length > EV_WINDOW) this.run.shift();
+    const runP = this.run.length >= 2 ? mean(gapsOf(this.run.map((b) => b.ts))) : null;
     const runOff = this.run.filter((b) => b.off).length;
-    const rival = this.run.length >= RIVAL_MIN && runOff * 2 >= this.run.length;
 
-    if (!off) {
-      // In step. Re-anchor at this beat's grid slot, pulled a little toward the beat. Steer the
-      // period from the whole-track estimate only once established; a young lock follows the
-      // 12-beat window so a sparse-intro lock yields quickly to real drums.
+    const ev = this.classify(lock, runP, runOff);
+    this.evidence = ev;
+    const samePeriod = ev === 'coherent' && runP !== null && Math.abs(runP / lock.periodUs - 1) < AGREE_PERIOD;
+    const newPeriod = ev === 'coherent' && !samePeriod;
+    const detail = {
+      ev, offMs: Math.round(e / 1000), run: this.run.length, runOff,
+      runBpm: runP ? +(60e6 / runP).toFixed(1) : null, confidence: +lock.confidence.toFixed(2),
+    };
+
+    if (ev === 'drift') {
+      // A ritardando or accelerando: the track is between tempos. Hold everything.
+      if (off) lock.dissent++;
+      this.log('drift', { ...detail, gapsMs: gapsOf(this.ts.slice(-EV_WINDOW)).map((g) => Math.round(g / 1000)) });
+      return;
+    }
+    if (newPeriod) {
+      // Coherent beats at another tempo: hold the lock, and relock once the run is long enough.
+      lock.dissent++;
+      this.log('dissent', detail);
+      this.tryTempoRelock(runOff);
+      return;
+    }
+    if (!off || ev === 'half') {
+      // In step (or every other slot). Re-anchor at this beat's grid slot, pulled a little toward
+      // the beat; steer the period (never from half-rate gaps); earn confidence.
       lock.anchorUs = slot + (firm ? PULL_PHASE_FIRM : pullPhaseLoose(lock.confidence)) * e;
-      if (firm) {
-        const P2 = this.longEstimate();
-        if (P2 && Math.abs(P2 / lock.periodUs - 1) < AGREE_PERIOD) lock.periodUs += PULL_PERIOD_FIRM * (P2 - lock.periodUs);
-      } else {
-        const est = this.estimateFromBeats();
-        if (est && Math.abs(est.periodUs / lock.periodUs - 1) < AGREE_PERIOD) lock.periodUs += pullPeriodLoose(lock.confidence) * (est.periodUs - lock.periodUs);
-      }
-      if (!rival) lock.confidence = Math.min(1, lock.confidence + CONF_GAIN);
+      if (ev !== 'half') this.steerPeriod(lock, firm, samePeriod ? runP : null);
+      lock.confidence = Math.min(1, lock.confidence + CONF_GAIN);
       lock.dissent = 0;
       this.emit();
-    } else {
-      lock.dissent++;
-      const runP = this.run.length >= 2 ? mean(gapsOf(this.run.map((b) => b.ts))) : null;
-      this.log('dissent', {
-        offMs: Math.round(e / 1000), run: this.run.length, runOff, rival,
-        runBpm: runP ? +(60e6 / runP).toFixed(1) : null, confidence: +lock.confidence.toFixed(2),
-      });
-      // Same tempo, new phase (a re-pushed beat list): re-anchor at once, keep period and trust.
-      if (this.tryPhaseRelock(slot)) return;
-      // Otherwise coast. Incoherent dissent costs nothing once established; a rival run costs.
-      if (rival) lock.confidence *= CONF_LOSS_RIVAL;
-      else if (!firm) lock.confidence *= CONF_LOSS_LOOSE;
+      return;
     }
-    if (rival) this.tryTempoRelock(runOff);
+    // Off-grid. Same tempo, new phase (a re-pushed beat list, a section on the offbeat): re-anchor
+    // at once, keep the period and the trust. Otherwise coast; incoherent dissent costs an
+    // established lock nothing, a young one a little.
+    lock.dissent++;
+    this.log('dissent', detail);
+    if (samePeriod && this.tryPhaseRelock(slot)) return;
+    if (!firm && ev === 'incoherent') lock.confidence *= CONF_LOSS_LOOSE;
+  }
+
+  /** Classify the last EV_WINDOW beats. Drift is tested on the whole window, coherence on the run. */
+  private classify(lock: Lock, runP: number | null, runOff: number): EvidenceClass {
+    const win = this.ts.slice(-EV_WINDOW);
+    if (win.length >= 2 && isDrifting(gapsOf(win))) return 'drift';
+    if (this.run.length < RUN_MIN || runP === null) return 'incoherent';
+    if (Math.abs(runP / (2 * lock.periodUs) - 1) < HALF_TOL) return runOff === 0 ? 'half' : 'incoherent';
+    if (runP < PERIOD_MIN || runP > PERIOD_MAX) return 'incoherent';
+    return 'coherent';
   }
 
   /**
-   * K consecutive off-grid beats whose mean gap is the locked period (within 4%) and whose
+   * Pull the period toward the best estimate within AGREE_PERIOD. Established: the whole-track
+   * trimmed mean when it agrees with the recent coherent run within 1%, else the run's mean gap.
+   * Young: the 12-beat fit, so a sparse-intro lock follows real drums quickly.
+   */
+  private steerPeriod(lock: Lock, firm: boolean, runP: number | null): void {
+    let target: number | null;
+    if (firm) {
+      const P2 = this.longEstimate();
+      target = P2 !== null && (runP === null || Math.abs(P2 / runP - 1) < STEER_LONG_TOL) ? P2 : runP ?? P2;
+    } else {
+      target = this.estimateFromBeats()?.periodUs ?? null;
+    }
+    if (target === null || Math.abs(target / lock.periodUs - 1) >= AGREE_PERIOD) return;
+    lock.periodUs += (firm ? PULL_PERIOD_FIRM : pullPeriodLoose(lock.confidence)) * (target - lock.periodUs);
+  }
+
+  /**
+   * RUN_MIN consecutive off-grid beats whose mean gap is the locked period (within 4%) and whose
    * offsets agree within 10% of a period: the grid has moved, not the tempo. Re-anchor onto them.
    */
   private tryPhaseRelock(slot: number): boolean {
     const lock = this.lock!;
-    if (lock.dissent < RIVAL_MIN || this.run.length < RIVAL_MIN) return false;
-    const tail = this.run.slice(-RIVAL_MIN);
+    if (lock.dissent < RUN_MIN || this.run.length < RUN_MIN) return false;
+    const tail = this.run.slice(-RUN_MIN);
     if (!tail.every((b) => b.off)) return false;
     const P = mean(gapsOf(tail.map((b) => b.ts)));
     if (Math.abs(P / lock.periodUs - 1) >= AGREE_PERIOD) return false;
@@ -256,25 +386,30 @@ export class BeatClock {
     lock.dissent = 0; this.run = [];
     this.rephases++;
     this.log('lock', {
-      bpm: +(60e6 / lock.periodUs).toFixed(2), source: lock.source, why: `phase relock after ${RIVAL_MIN} beats`,
+      bpm: +(60e6 / lock.periodUs).toFixed(2), source: lock.source, why: `phase relock after ${RUN_MIN} beats`,
       shiftMs: Math.round(shift / 1000), confidence: +lock.confidence.toFixed(2),
     });
     this.emit();
     return true;
   }
 
-  /** A rival run of at least 8 steady beats spanning the confidence-scaled minimum replaces the lock. */
+  /**
+   * A coherent run of RELOCK_BEATS spanning RELOCK_SPAN at another period replaces the lock,
+   * whatever its confidence. Never onto half the tempo (the caller classified that as `half` or
+   * `incoherent`); double is allowed: beats between our slots mean the grid is missing them.
+   */
   private tryTempoRelock(runOff: number): void {
     const lock = this.lock!;
     if (this.run.length < RELOCK_BEATS) return;
     const ts = this.run.map((b) => b.ts);
     const span = ts[ts.length - 1] - ts[0];
-    if (span < relockSpanUs(lock.confidence)) return;
+    if (span < RELOCK_SPAN_US) return;
     const P = mean(gapsOf(ts));
     if (P < PERIOD_MIN || P > PERIOD_MAX) return;
+    if (Math.abs(P / (2 * lock.periodUs) - 1) < HALF_TOL) return;
     this.relocks++;
-    this.adopt(P, ts[ts.length - 1], 'server', `relock after ${ts.length} steady beats (${runOff} off-grid)`, 0.4);
-    this.all = ts.slice(); this.run = [];
+    this.adopt(P, ts[ts.length - 1], 'server', `relock after ${ts.length} coherent beats over ${(span / 1e6).toFixed(1)} s (${runOff} off-grid)`, RELOCK_CONFIDENCE);
+    this.ts = ts.slice(); this.all = ts.slice(); this.run = [];   // history restarts at the new tempo
   }
 
   /** Tempo and last beat from the beat windows (short least-squares fit, long trimmed mean). */
@@ -314,16 +449,21 @@ export class BeatClock {
   /** Feed a server `peak` (onset) frame at the moment it is due. */
   trackOnset(timestampUs: number, strength: number): void {
     this.onsets.push({ ts: timestampUs, w: 0.3 + strength / 255 });
+    while (this.onsets.length && this.onsets[0].ts < timestampUs - 10_000_000) this.onsets.shift();
     if (!this.onsetFallback) return;
     // Server beats always win: if the stream offers `beat`, or a server lock exists, onsets are ignored.
     if (this.serverOffersBeats || this.lock?.source === 'server') return;
-    const now = this.now();
-    if (now - this.lastOnsetEstimate < 1000) return;
-    this.lastOnsetEstimate = now;
+    if (this.now() - this.lastOnsetEstimate < 1000) return;
+    this.onsetStep();
+  }
 
+  /** One onset estimate, judged against the lock or voted toward a first one. At most once a second. */
+  private onsetStep(): void {
+    const now = this.now();
+    this.lastOnsetEstimate = now;
     const est = this.estimateFromOnsets();
     this.log('onset-est', est ? { bpm: +(60e6 / est.P).toFixed(1), score: +est.score.toFixed(2) } : { none: true });
-    if (!est) return;
+    if (!est) { if (!this.lock) this.searching('onsets'); return; }
     const nowS = this.opts.serverNowUs();
 
     if (this.lock) {
@@ -342,12 +482,12 @@ export class BeatClock {
         this.emit();
         return;
       }
-      // Dissent. Same rule as for beats: an established lock ignores it unless it is coherent,
-      // and coherent dissent must persist for 4 estimates (2 while unsure) to replace the lock.
+      // Dissent. Same idea as for beats: only coherent dissent moves the lock, and it must
+      // persist for 4 estimates (2 while unsure) to replace it.
       lock.dissent++;
       if (!firm) lock.confidence *= CONF_LOSS_LOOSE;
       this.onsetVotes.push({ P: est.P, next: est.next, t: nowS, score: est.score });
-      const need = firm ? RIVAL_MIN : 2;
+      const need = firm ? ONSET_VOTES_FIRM : ONSET_VOTES_LOOSE;
       if (this.onsetVotes.length > need) this.onsetVotes.shift();
       const Ps = this.onsetVotes.map((v) => v.P);
       const steady = this.onsetVotes.length === need && Math.max(...Ps) / Math.min(...Ps) < 1.03;
@@ -363,12 +503,12 @@ export class BeatClock {
 
     // no lock yet: adopt when two consecutive estimates agree; start with confidence from clarity
     this.onsetVotes.push({ P: est.P, next: est.next, t: nowS, score: est.score });
-    if (this.onsetVotes.length > 2) this.onsetVotes.shift();
+    if (this.onsetVotes.length > ONSET_VOTES_LOOSE) this.onsetVotes.shift();
     const Ps = this.onsetVotes.map((v) => v.P);
-    if (this.onsetVotes.length === 2 && Math.max(...Ps) / Math.min(...Ps) < 1.03) {
-      this.adopt((Ps[0] + Ps[1]) / 2, est.next, 'onsets', 'first onset lock', Math.min(0.5, est.score - 0.3));
+    if (this.onsetVotes.length === ONSET_VOTES_LOOSE && Math.max(...Ps) / Math.min(...Ps) < 1.03) {
+      this.adopt(mean(Ps), est.next, 'onsets', 'first onset lock', Math.min(0.5, est.score - 0.3));
       this.onsetVotes = [];
-    }
+    } else this.searching('onsets');
   }
 
   /**
@@ -424,7 +564,7 @@ export class BeatClock {
     const k = Math.ceil((nowS - lock.anchorUs) / lock.periodUs);
     const next = lock.anchorUs + Math.max(k, 0) * lock.periodUs;
     this.nextLocal = this.now() + (next - nowS) / 1000;
-    this.log('tempo', { bpm: +this.bpm.toFixed(2), source: lock.source, dissent: lock.dissent, confidence: +lock.confidence.toFixed(2), established: lock.confidence >= ESTABLISHED });
+    this.log('tempo', { bpm: +this.bpm.toFixed(2), source: lock.source, ev: this.evidence, dissent: lock.dissent, confidence: +lock.confidence.toFixed(2), established: lock.confidence >= ESTABLISHED });
     this.opts.onClock({ period: lock.periodUs / 1e6, nextBeatAt: this.nextLocal });
   }
 

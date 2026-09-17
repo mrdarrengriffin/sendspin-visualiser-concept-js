@@ -22,10 +22,12 @@ what to drop, and what it costs.
   and the exact re-forming stop.
 - The beat lock formulas and the anchor rule. They are a few lines and platform-independent.
 - The tempo clock rules if the source is Sendspin beats: one sticky lock, judge each beat against
-  it, established at confidence 0.8 (then pulls of 0.1 and isolated off-grid beats ignored), the
-  steady run and its rival test (K = 4, half off-grid), phase relock at once, tempo relock only for
-  8 steady rival beats spanning 3–9 s, coasting. The estimator behind it (regression over 12,
-  trimmed-mean of gaps over the track, 25% discontinuity cut) is what feeds the period pull.
+  it, established at confidence 0.8 (pulls of 0.1; published to the visual only from then), the
+  eight-beat evidence window and its classes (coherent within 6%, half at 2× on-grid, drift of three
+  same-sign gap steps, incoherent), phase relock after 4 consistently shifted beats, tempo relock
+  after 6 coherent beats spanning 2 s at a new period whatever the confidence, hold on half, drift
+  and incoherent, coasting. The estimator behind it (regression over 12, trimmed-mean of gaps over
+  the track, 25% discontinuity cut) feeds the period pull.
 
 ## Drop or simplify freely
 

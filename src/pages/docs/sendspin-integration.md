@@ -98,8 +98,8 @@ frames older than 2 s on arrival are dropped. Beats arrive ~3 s early, periodic 
 
 | Input | Effect | Default |
 |---|---|---|
-| loudness | flow speed `8 + 120 · energy^1.6`, energy = attack 0.45 / release 0.08 smoothing of value/65535 | on |
-| beat | tempo clock (see [Beat sync](/docs/beat-sync)); optional pulse | lock on, pulse off |
+| loudness | flow speed `8 + 72 · energy^1.4` units/s (8 at silence, 80 at full scale, flattened at the top so loud passages do not race), energy = attack 0.45 / release 0.08 smoothing of value/65535 | on |
+| beat | tempo clock (see [Beat sync](/docs/beat-sync)), published to the logo only once the lock is established; optional pulse | lock on, pulse off |
 | peak | optional flash; onset tempo fallback input | flash off, fallback on |
 | spectrum | optional per-arc brightness, per-band auto-gain (floor/peak trackers) | off |
 | color | shape colours and page background | on |
