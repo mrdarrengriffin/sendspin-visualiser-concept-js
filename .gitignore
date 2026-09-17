@@ -1,0 +1,5 @@
+tools/testserver-state/
+venv/
+node_modules/
+__pycache__/
+*.pyc

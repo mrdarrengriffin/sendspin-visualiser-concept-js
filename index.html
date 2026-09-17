@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>sendspin — logo lab</title>
+<style>
+  html, body { margin: 0; height: 100%; display: grid; place-items: center; background: #111; font-family: sans-serif; color: #ccc; }
+  #logo { width: 60vmin; height: 60vmin; }
+  #ui { position: fixed; top: 16px; left: 16px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: 13px; }
+  #ui label { display: flex; gap: 6px; align-items: center; }
+  button { padding: 8px 14px; }
+  a { color: #4cc9f0; position: fixed; bottom: 16px; left: 16px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <button id="mode">Toggle align</button>
+  <button id="guides">Toggle guides</button>
+  <button id="colours">Toggle colours</button>
+  <button id="anim">Animation: off</button>
+  <label>speed <input id="speed" type="range" min="0" max="120" value="40" step="1"></label>
+  <label>dash <input id="dash" type="range" min="8" max="60" value="24" step="1"></label>
+  <button id="random">Random: off</button>
+  <label>radius <input id="radius" type="range" min="0" max="3" value="0.8" step="0.1"></label>
+  <button id="pulse">Pulse</button>
+  <button id="flash">Flash</button>
+  <button id="levels">Random levels</button>
+  <button id="beat">Beat 120: off</button>
+  <button id="reset">Reset</button>
+</div>
+<div id="logo"></div>
+<a href="player.html">→ Sendspin player</a>
+<script type="module">
+  import { mountLogo, BRAND_RED } from './logo.js';
+  const $ = id => document.getElementById(id);
+  const logo = mountLogo($('logo'));
+  window.logo = logo;
+  let twoTone = false, anim = false, random = false;
+  $('mode').onclick = () => logo.toggleMode();
+  $('guides').onclick = () => logo.showGuides(!logo.svg.classList.contains('show-guides'));
+  $('colours').onclick = () => { twoTone = !twoTone; logo.setColors(BRAND_RED, twoTone ? '#4cc9f0' : BRAND_RED); logo.recolor(); };
+  $('anim').onclick = () => { anim = !anim; logo.setAnimating(anim); $('anim').textContent = anim ? 'Animation: on' : 'Animation: off'; };
+  $('speed').oninput = e => logo.setSpeed(+e.target.value);
+  $('dash').oninput = e => logo.setDash(+e.target.value);
+  $('random').onclick = () => { random = !random; logo.setRandom(random); $('random').textContent = random ? 'Random: on' : 'Random: off'; };
+  $('radius').oninput = e => logo.setRadius(+e.target.value);
+  $('pulse').onclick = () => logo.pulse(1);
+  $('flash').onclick = () => logo.flash(1);
+  $('levels').onclick = () => logo.setLevels(Array.from({ length: 8 }, Math.random));
+  $('reset').onclick = () => { logo.reset(); logo.clearLevels(); };
+  // fake 120 BPM clock so the beat lock can be seen without music
+  let beatTimer = null;
+  $('beat').onclick = () => {
+    if (beatTimer) { clearInterval(beatTimer); beatTimer = null; logo.clearBeatClock(); logo.showBeatMarkers(false); $('beat').textContent = 'Beat 120: off'; return; }
+    const P = 0.5; let next = performance.now() + 500;
+    const tick = () => { logo.setBeatClock({ period: P, nextBeatAt: next }); next += P * 1000; };
+    tick(); beatTimer = setInterval(tick, P * 1000);
+    logo.showBeatMarkers(true); if (!anim) $('anim').click(); $('beat').textContent = 'Beat 120: on';
+  };
+</script>
+</body>
+</html>

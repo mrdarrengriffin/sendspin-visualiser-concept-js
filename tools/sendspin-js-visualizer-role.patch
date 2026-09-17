@@ -1,0 +1,370 @@
+diff --git a/src/core/core.ts b/src/core/core.ts
+index 91c58f0..8bbc4ce 100644
+--- a/src/core/core.ts
++++ b/src/core/core.ts
+@@ -34,6 +34,9 @@ import type {
+   ControllerCommands,
+   ServerStatePayload,
+   GroupUpdatePayload,
++  VisualizerFrame,
++  VisualizerRequest,
++  VisualizerStreamConfig,
+ } from "../types";
+ import type { StreamHandler } from "../internal-types";
+ 
+@@ -238,7 +241,80 @@ export class SendspinCore implements StreamHandler {
+   // (called by ProtocolHandler)
+   // ========================================
+ 
++  /** Visualizer role callbacks (set by SendspinPlayer). */
++  onVisualizerFrame: ((frame: VisualizerFrame) => void) | null = null;
++  onVisualizerStream: ((config: VisualizerStreamConfig | null) => void) | null =
++    null;
++  onVisualizerClear: (() => void) | null = null;
++
++  setVisualizerRequest(request: VisualizerRequest | null): void {
++    this.protocolHandler.setVisualizerRequest(request);
++  }
++
++  handleVisualizerStreamStart(config: VisualizerStreamConfig): void {
++    console.log("Sendspin: Visualizer stream started", config);
++    this.onVisualizerStream?.(config);
++  }
++  handleVisualizerStreamClear(): void {
++    this.onVisualizerClear?.();
++  }
++  handleVisualizerStreamEnd(): void {
++    console.log("Sendspin: Visualizer stream ended");
++    this.onVisualizerStream?.(null);
++  }
++
++  // Binary visualizer frame: [type:1][timestamp:8 BE int64][data]
++  // See spec roles/visualizer/v1.md. All uint16 fields are big-endian.
++  private handleVisualizerBinary(type: number, data: ArrayBuffer): void {
++    if (!this.onVisualizerFrame || data.byteLength < 9) return;
++    const view = new DataView(data);
++    const timestampUs = Number(view.getBigInt64(1));
++    switch (type) {
++      case 16:
++        this.onVisualizerFrame({
++          type: "loudness",
++          timestampUs,
++          value: view.getUint16(9),
++        });
++        break;
++      case 17:
++        this.onVisualizerFrame({
++          type: "beat",
++          timestampUs,
++          downbeat: (view.getUint8(9) & 1) === 1,
++        });
++        break;
++      case 18:
++        this.onVisualizerFrame({
++          type: "f_peak",
++          timestampUs,
++          freq: view.getUint16(9),
++          amp: view.getUint16(11),
++        });
++        break;
++      case 19: {
++        const n = (data.byteLength - 9) >> 1;
++        const bins = new Uint16Array(n);
++        for (let i = 0; i < n; i++) bins[i] = view.getUint16(9 + 2 * i);
++        this.onVisualizerFrame({ type: "spectrum", timestampUs, bins });
++        break;
++      }
++      case 20:
++        this.onVisualizerFrame({
++          type: "peak",
++          timestampUs,
++          strength: view.getUint8(9),
++        });
++        break;
++    }
++  }
++
+   handleBinaryMessage(data: ArrayBuffer): void {
++    const messageType = new Uint8Array(data, 0, 1)[0];
++    if (messageType >= 16 && messageType <= 23) {
++      this.handleVisualizerBinary(messageType, data);
++      return;
++    }
+     const format = this.stateManager.currentStreamFormat;
+     if (!format) {
+       console.warn("Sendspin: Received audio chunk but no stream format set");
+diff --git a/src/core/protocol-handler.ts b/src/core/protocol-handler.ts
+index fd1baa0..dff517c 100644
+--- a/src/core/protocol-handler.ts
++++ b/src/core/protocol-handler.ts
+@@ -25,6 +25,10 @@ import type { StateManager } from "./state-manager";
+ import { TimeSyncManager } from "./time-sync-manager";
+ import { getDefaultBufferCapacity, getSupportedFormats } from "./codec-support";
+ import { clampSyncDelayMs } from "../sync-delay";
++import type { VisualizerRequest } from "../types";
++
++// Max bytes of not-yet-due visualizer frames the server may have in flight to us.
++const VISUALIZER_BUFFER_CAPACITY = 256 * 1024;
+ 
+ // Constants
+ const STATE_UPDATE_INTERVAL = 5000; // 5 seconds
+@@ -95,6 +99,8 @@ export class ProtocolHandler {
+   // full again.
+   private lastSentPlayer: SentPlayerState | null = null;
+ 
++  private visualizerRequest: VisualizerRequest | null = null;
++
+   constructor(
+     private sender: MessageSender,
+     private helloContext: HelloContext,
+@@ -238,9 +244,14 @@ export class ProtocolHandler {
+   }
+ 
+   private handleStreamStart(message: StreamStart): void {
++    if (message.payload.visualizer) {
++      this.streamHandler.handleVisualizerStreamStart(message.payload.visualizer);
++    }
++    const player = message.payload.player;
++    if (!player) return;
+     const isFormatUpdate = this.stateManager.currentStreamFormat !== null;
+ 
+-    this.stateManager.currentStreamFormat = message.payload.player;
++    this.stateManager.currentStreamFormat = player;
+     console.log(
+       isFormatUpdate
+         ? "Sendspin: Stream format updated"
+@@ -269,6 +280,9 @@ export class ProtocolHandler {
+ 
+   private handleStreamClear(message: StreamClear): void {
+     const roles = message.payload.roles;
++    if (!roles || roles.includes("visualizer")) {
++      this.streamHandler.handleVisualizerStreamClear();
++    }
+     if (!roles || roles.includes("player")) {
+       console.log("Sendspin: Stream clear (seek)");
+       this.streamHandler.handleStreamClear();
+@@ -277,6 +291,9 @@ export class ProtocolHandler {
+ 
+   private handleStreamEnd(message: StreamEnd): void {
+     const roles = message.payload?.roles;
++    if (!roles || roles.includes("visualizer")) {
++      this.streamHandler.handleVisualizerStreamEnd();
++    }
+     if (!roles || roles.includes("player")) {
+       console.log("Sendspin: Stream ended");
+       this.streamHandler.handleStreamEnd();
+@@ -346,7 +363,13 @@ export class ProtocolHandler {
+       type: "client/hello" as MessageType.CLIENT_HELLO,
+       payload: {
+         name: this.clientName,
+-        supported_roles: ["player@v1", "controller@v1", "metadata@v1"],
++        supported_roles: [
++          "player@v1",
++          "controller@v1",
++          "metadata@v1",
++          ...(this.visualizerRequest ? ["visualizer@v1"] : []),
++          "color@v1",
++        ],
+         trust_level: this.helloContext.trustLevel(),
+         supported_pair_methods: this.helloContext.pairMethods(),
+         unpaired_access: { enabled: this.helloContext.unpairedAccess },
+@@ -364,6 +387,16 @@ export class ProtocolHandler {
+             this.bufferCapacity ?? getDefaultBufferCapacity(supportedFormats),
+           supported_commands: ["volume", "mute"],
+         },
++        ...(this.visualizerRequest
++          ? {
++              // buffer_capacity is the spec field; the stream configuration is repeated here
++              // for servers (aiosendspin <= 9.1.x) that still read it from the hello.
++              "visualizer@v1_support": {
++                buffer_capacity: VISUALIZER_BUFFER_CAPACITY,
++                ...this.visualizerRequest,
++              },
++            }
++          : {}),
+       },
+     };
+     // Reset so the first client/state after connect is a full snapshot.
+@@ -435,6 +468,13 @@ export class ProtocolHandler {
+       this.lastSentPlayer = current;
+     }
+ 
++    if (
++      this.visualizerRequest &&
++      (this.activeRoles === null || this.activeRoles.has("visualizer@v1"))
++    ) {
++      payload.visualizer = this.visualizerRequest;
++    }
++
+     const message: ClientState = {
+       type: "client/state" as MessageType.CLIENT_STATE,
+       payload,
+@@ -442,6 +482,12 @@ export class ProtocolHandler {
+     this.sender.sendControl(message);
+   }
+ 
++  /** Set (or clear with null) the visualizer request; re-sent on the next client/state. */
++  setVisualizerRequest(request: VisualizerRequest | null): void {
++    this.visualizerRequest = request;
++    if (this.activated) this.sendStateUpdate();
++  }
++
+   // Send goodbye message before disconnecting
+   sendGoodbye(reason: GoodbyeReason): void {
+     this.sender.sendControl({
+diff --git a/src/index.ts b/src/index.ts
+index 92644d2..a1f1cb1 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -10,6 +10,7 @@ import type {
+   ControllerCommand,
+   ControllerCommands,
+   CorrectionMode,
++  VisualizerRequest,
+ } from "./types";
+ 
+ // Platform detection utilities
+@@ -129,6 +130,12 @@ export class SendspinPlayer {
+       this.scheduler.handleDecodedChunk(chunk);
+     };
+ 
++    // Visualizer + colour roles
++    this.core.onVisualizerFrame = config.onVisualizerFrame ?? null;
++    this.core.onVisualizerStream = config.onVisualizerStream ?? null;
++    this.core.onVisualizerClear = config.onVisualizerClear ?? null;
++    if (config.visualizer) this.core.setVisualizerRequest(config.visualizer);
++
+     this.core.onStreamStart = (format, isFormatUpdate) => {
+       this.scheduler.initAudioContext();
+       void this.scheduler.resumeAudioContext().catch((error) => {
+@@ -372,6 +379,11 @@ export class SendspinPlayer {
+   }
+ 
+   /** Get current server time in microseconds using synchronized clock */
++  /** Change what visualizer data is requested; takes effect on the next client/state. */
++  setVisualizerRequest(request: VisualizerRequest | null): void {
++    this.core.setVisualizerRequest(request);
++  }
++
+   getCurrentServerTimeUs(): number {
+     return this.core.getCurrentServerTimeUs();
+   }
+diff --git a/src/internal-types.ts b/src/internal-types.ts
+index 8a83a6e..643bb71 100644
+--- a/src/internal-types.ts
++++ b/src/internal-types.ts
+@@ -1,3 +1,4 @@
++import type { VisualizerStreamConfig } from "./types";
+ /**
+  * Internal plumbing types shared across SDK modules but not part of the
+  * public API surface. These are intentionally NOT re-exported from index.ts.
+@@ -20,6 +21,9 @@ export interface StreamHandler {
+   handleStreamStart(format: StreamFormat, isFormatUpdate: boolean): void;
+   handleStreamClear(): void;
+   handleStreamEnd(): void;
++  handleVisualizerStreamStart(config: VisualizerStreamConfig): void;
++  handleVisualizerStreamClear(): void;
++  handleVisualizerStreamEnd(): void;
+   handleVolumeUpdate(): void;
+   handleSyncDelayChange(delayMs: number): void;
+   getSyncDelayMs(): number;
+diff --git a/src/types.ts b/src/types.ts
+index 91d9288..8fd10b5 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -121,6 +121,7 @@ export interface ClientState {
+       min_buffer_ms?: number;
+       supported_commands?: string[];
+     };
++    visualizer?: VisualizerRequest;
+   };
+ }
+ 
+@@ -173,6 +174,45 @@ export interface ServerStateMetadata {
+   shuffle?: boolean | null;
+ }
+ 
++export interface ServerStateColor {
++  timestamp?: number;
++  background_dark?: number[] | null;
++  background_light?: number[] | null;
++  primary?: number[] | null;
++  accent?: number[] | null;
++  on_dark?: number[] | null;
++  on_light?: number[] | null;
++}
++
++export type VisualizerType = "beat" | "loudness" | "f_peak" | "peak" | "spectrum";
++
++export interface VisualizerSpectrumConfig {
++  n_disp_bins: number;
++  scale: "mel" | "log" | "lin";
++  f_min: number;
++  f_max: number;
++}
++
++/** What the client asks the server to stream (client/state visualizer object). */
++export interface VisualizerRequest {
++  types: VisualizerType[];
++  rate_max: number;
++  spectrum?: VisualizerSpectrumConfig;
++}
++
++/** What the server will actually stream (stream/start visualizer object). */
++export interface VisualizerStreamConfig extends VisualizerRequest {
++  tracks_downbeats?: boolean;
++}
++
++/** One decoded visualizer frame. timestampUs is server-clock microseconds. */
++export type VisualizerFrame =
++  | { type: "loudness"; timestampUs: number; value: number }
++  | { type: "beat"; timestampUs: number; downbeat: boolean }
++  | { type: "f_peak"; timestampUs: number; freq: number; amp: number }
++  | { type: "spectrum"; timestampUs: number; bins: Uint16Array }
++  | { type: "peak"; timestampUs: number; strength: number };
++
+ export interface ServerStateController {
+   supported_commands?: string[];
+   volume?: number;
+@@ -187,6 +227,7 @@ export interface ServerStatePayload {
+   metadata?: ServerStateMetadata;
+   controller?: ServerStateController;
+   player?: ServerStatePlayer;
++  color?: ServerStateColor;
+ }
+ 
+ export interface ServerState {
+@@ -197,13 +238,14 @@ export interface ServerState {
+ export interface StreamStart {
+   type: MessageType.STREAM_START;
+   payload: {
+-    player: {
++    player?: {
+       codec: string;
+       sample_rate: number;
+       channels: number;
+       bit_depth?: number;
+       codec_header?: string;
+     };
++    visualizer?: VisualizerStreamConfig;
+   };
+ }
+ 
+@@ -439,6 +481,17 @@ export interface SupportedFormat {
+ }
+ 
+ export interface SendspinPlayerConfig extends SendspinCoreConfig {
++  /**
++   * Visualizer role: what analysis data to request from the server. When set,
++   * the client advertises visualizer@v1 and frames arrive via onVisualizerFrame.
++   */
++  visualizer?: VisualizerRequest;
++  /** Called for every decoded visualizer frame (loudness, beat, f_peak, spectrum, peak). */
++  onVisualizerFrame?: (frame: VisualizerFrame) => void;
++  /** Called when the server starts/updates (config) or ends (null) the visualizer stream. */
++  onVisualizerStream?: (config: VisualizerStreamConfig | null) => void;
++  /** Called when the server clears the visualizer stream (seek / track jump). */
++  onVisualizerClear?: () => void;
+   /**
+    * HTMLAudioElement for media-element output mode.
+    * Auto-created on mobile browsers if not provided.
