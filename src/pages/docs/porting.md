@@ -1,7 +1,13 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Porting guide
+description: What to keep, what to drop, and what it costs when reimplementing elsewhere.
+---
+
 # Porting guide
 
 For reimplementing this on another platform (native app, ESP32 with a small display, a different
-language). Read `GEOMETRY.md`, `ANIMATION.md`, `BEAT-SYNC.md` first; this file says what to keep,
+language). Read [Geometry](/docs/geometry), [Animation](/docs/animation), [Beat sync](/docs/beat-sync) first; this file says what to keep,
 what to drop, and what it costs.
 
 ## Keep verbatim
@@ -60,4 +66,4 @@ protocol-side item and is avoidable by not taking the player role.
 
 Loudness, spectrum, onsets and beats are computed by the server (aiosendspin's visualizer role).
 Beats exist only when Music Assistant's `smart_fades` analysis has run for the track. A port
-inherits all of these behaviours; see `BEAT-SYNC.md` for the consequences.
+inherits all of these behaviours; see [Beat sync](/docs/beat-sync) for the consequences.

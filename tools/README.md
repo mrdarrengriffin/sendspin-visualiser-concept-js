@@ -1,6 +1,6 @@
 # tools
 
-Everything needed to rebuild `vendor/sendspin/` and to test without Music Assistant.
+Everything needed to rebuild `src/lib/sendspin/vendor/` and to test without Music Assistant.
 
 ## Rebuild the patched sendspin-js
 
@@ -15,7 +15,7 @@ The stock `@sendspin/sendspin-js` only speaks the player, controller and metadat
     npm install && npm run build
     cp ../tools/rollup.bundle.config.mjs . && npx rollup -c rollup.bundle.config.mjs
 
-`rollup.bundle.config.mjs` writes an ESM bundle to `vendor/sendspin/` (adjust the output dir).
+`rollup.bundle.config.mjs` writes an ESM bundle to `src/lib/sendspin/vendor/` (adjust the output dir).
 
 ## Local test server
 

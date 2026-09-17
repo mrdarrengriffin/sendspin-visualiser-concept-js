@@ -1,3 +1,9 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Beat sync
+description: The beat lock, the tempo clock, and how Music Assistant produces beats.
+---
+
 # Beat sync
 
 Goal: every dash enters its solid path exactly on a beat (or a chosen subdivision) and, because

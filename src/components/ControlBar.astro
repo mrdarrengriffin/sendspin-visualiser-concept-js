@@ -1,0 +1,55 @@
+---
+/**
+ * The player's control bar. Everything is addressed by data-control="<name>" so the script never
+ * depends on ids; see src/scripts/player.ts for the behaviour behind each control.
+ */
+---
+<div class="bar">
+  <input data-control="url" type="text" placeholder="http://<music-assistant-ip>:8927" aria-label="Music Assistant address" />
+  <button data-control="connect">Connect</button>
+  <span class="status" data-control="status">disconnected</span>
+  <span class="spacer"></span>
+
+  <span class="group" role="group" aria-label="Transport">
+    <button data-cmd="previous" title="Previous">⏮</button>
+    <button data-cmd="play" title="Play">▶</button>
+    <button data-cmd="pause" title="Pause">⏸</button>
+    <button data-cmd="next" title="Next">⏭</button>
+    <label>vol <input data-control="vol" type="range" min="0" max="100" value="60" /></label>
+  </span>
+
+  <span class="group" role="group" aria-label="Music mapping">
+    <label><input data-control="react" type="checkbox" checked /> react</label>
+    <label><input data-control="pulse" type="checkbox" /> pulse</label>
+    <label><input data-control="flash" type="checkbox" /> flash</label>
+    <label><input data-control="spectrum" type="checkbox" /> spectrum</label>
+    <label>sat <input data-control="sat" type="range" min="1" max="2.5" value="1" step="0.1" /></label>
+  </span>
+
+  <span class="group" role="group" aria-label="Beat sync">
+    <label><input data-control="lock" type="checkbox" checked /> beat lock</label>
+    <label title="guess the tempo from onsets when the server sends no beats"><input data-control="onsets" type="checkbox" checked /> onset tempo</label>
+    <label title="dashes per beat for paths 0-4; fractions allowed, e.g. 0.5 = one dash spanning two beats">
+      divs <input data-control="divs" type="text" value="2,1,2,1,1" size="12" />
+    </label>
+    <label title="shift the visual beat later (+) or earlier (-) to match what you hear">
+      offset <input data-control="offset" type="range" min="-400" max="400" value="0" step="10" />
+      <span data-control="offset-value">0 ms</span>
+    </label>
+  </span>
+
+  <span class="group" role="group" aria-label="View">
+    <label><input data-control="debug" type="checkbox" checked /> debug</label>
+    <label><input data-control="markers" type="checkbox" checked /> markers</label>
+    <button data-control="mode">joined view</button>
+    <button data-control="guides">guides</button>
+  </span>
+</div>
+
+<style>
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 12px 16px; font-size: 13px; }
+  .bar input[type="text"][data-control="url"] { width: 260px; }
+  .status { color: var(--muted); }
+  .spacer { flex: 1; }
+  .group { display: inline-flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; padding-left: 10px; border-left: 1px solid #fff2; }
+</style>

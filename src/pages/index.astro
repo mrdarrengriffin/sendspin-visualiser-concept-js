@@ -1,0 +1,30 @@
+---
+import Layout from '../layouts/Layout.astro';
+import HttpsWarning from '../components/HttpsWarning.astro';
+import ControlBar from '../components/ControlBar.astro';
+import Logo from '../components/Logo.astro';
+import TrackInfo from '../components/TrackInfo.astro';
+import PaletteStrip from '../components/PaletteStrip.astro';
+import BeatDebug from '../components/BeatDebug.astro';
+---
+<Layout title="Sendspin visualiser">
+  <div class="page">
+    <HttpsWarning />
+    <ControlBar />
+    <main class="stage"><Logo /></main>
+    <footer class="info">
+      <TrackInfo />
+      <PaletteStrip />
+      <BeatDebug />
+      <nav class="links"><a href="/lab">Logo lab</a> · <a href="/docs/">Docs</a> · <a href="https://github.com/mrdarrengriffin/sendspin-visualiser-concept-js">Source</a></nav>
+    </footer>
+  </div>
+  <script src="../scripts/player.ts"></script>
+</Layout>
+
+<style>
+  .page { min-height: 100vh; display: grid; grid-template-rows: auto auto 1fr auto; }
+  .stage { display: grid; place-items: center; padding: 8px 0; }
+  .info { padding: 0 16px 20px; }
+  .links { text-align: center; margin-top: 18px; font-size: 12px; color: var(--muted); }
+</style>

@@ -1,0 +1,12 @@
+---
+/** Shown by the player script when the page is served over https:// (ws:// to a LAN server is then blocked). */
+---
+<div class="https-warning" data-https-warning hidden>
+  This page is loaded over HTTPS, so your browser will block the plain WebSocket connection to a
+  Music Assistant on your network. Open the <a data-http-link href="#">http:// version of this page</a> instead.
+</div>
+
+<style>
+  .https-warning { background: #c33; color: #fff; padding: 10px 16px; font-size: 14px; }
+  .https-warning a { color: #fff; font-weight: 600; }
+</style>

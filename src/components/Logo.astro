@@ -1,0 +1,12 @@
+---
+/** Mount point for the animated logo. A page script calls mountLogo() on the element with data-logo. */
+interface Props {
+  size?: string;
+}
+const { size = 'min(60vmin, 520px)' } = Astro.props;
+---
+<div class="logo" data-logo style={`width:${size};height:${size}`}></div>
+
+<style>
+  .logo { display: block; margin: 0 auto; }
+</style>

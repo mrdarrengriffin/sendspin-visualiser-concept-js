@@ -1,3 +1,9 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Animation model
+description: The dash queue, easing, colours and the public API of the logo module.
+---
+
 # Animation model
 
 Implemented in `logo.js`. This document is the specification of what the animation does, so it can
@@ -5,7 +11,7 @@ be reimplemented without SVG.
 
 ## The queue
 
-Each chain (solid path, see `GEOMETRY.md`) carries an explicit **queue of elements**, each
+Each chain (solid path, see [Geometry](/docs/geometry)) carries an explicit **queue of elements**, each
 `{ p, len, dash, color }`, contiguous and sorted by pattern position `p`. A chain has a scalar
 `phase`. An element occupies path distance `u = p + phase` … `p + len + phase`, where `u = 0` is
 the chain's entry (top-right end) and `u = T` its exit. Raising `phase` carries everything toward
@@ -23,7 +29,7 @@ Blocks that can be prepended:
 - **anim** — each arc split into `n = max(1, round((L + GAP) / (dash + GAP)))` equal dashes with
   8-unit gaps, preserving the arc's total length. `dash` is a user setting (default 24).
 - **random** — one dash of length `dash × U(0.5, 1.5)` plus an 8-unit gap.
-- **beat** — one dash + gap per beat subdivision; see `BEAT-SYNC.md`.
+- **beat** — one dash + gap per beat subdivision; see [Beat sync](/docs/beat-sync).
 
 ## Start, stop, and easing
 
@@ -52,7 +58,7 @@ Per frame, a shape's colour = `mix(mix(bg, base, 0.5 + 0.5·level), white, 0.6·
   `exp(−dt / 0.22)`.
 
 In the player, all three are opt-in and off by default; loudness drives speed instead (see
-`SENDSPIN-INTEGRATION.md`).
+[Sendspin integration](/docs/sendspin-integration)).
 
 ## View switching
 
@@ -77,7 +83,7 @@ Returns:
 | `setBackground(hex)`, `setColorEase(s)` | colour mixing reference and fade time |
 | `flash(x)`, `pulse(x)`, `setLevels([8])`, `clearLevels()` | music hooks (levels indexed by `BY_SIZE`) |
 | `showGuides(bool)` | corner guides overlay |
-| `setBeatClock({period, nextBeatAt})`, `clearBeatClock()` | beat lock input (see `BEAT-SYNC.md`) |
+| `setBeatClock({period, nextBeatAt})`, `clearBeatClock()` | beat lock input (see [Beat sync](/docs/beat-sync)) |
 | `setBeatDiv(d)`, `setPathBeatDivs([...])`, `setBeatOffset(ms)` | subdivisions and visual offset |
 | `showBeatMarkers(bool)`, `beatDebug()` | entry/exit rings with path numbers; per-path telemetry |
 | `reset()`, `destroy()` | |

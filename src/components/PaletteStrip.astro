@@ -1,0 +1,12 @@
+---
+/** Debug strip: artwork plus the six colour-role swatches with their contrast ratios. Filled by the player script. */
+---
+<div class="palette" data-palette></div>
+
+<style is:global>
+  .palette { display: flex; gap: 10px; justify-content: center; align-items: flex-end; margin-top: 14px; min-height: 64px; font: 10px monospace; color: var(--muted); }
+  .palette .sw { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .palette .sw i { display: block; width: 44px; height: 30px; border-radius: 6px; border: 1px solid #fff2; }
+  .palette .sw.used i { outline: 2px solid var(--fg); outline-offset: 2px; }
+  .palette img { width: 64px; height: 64px; border-radius: 6px; object-fit: cover; margin-right: 10px; }
+</style>

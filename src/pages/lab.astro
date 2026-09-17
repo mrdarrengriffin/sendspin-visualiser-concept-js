@@ -1,0 +1,33 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Logo from '../components/Logo.astro';
+---
+<Layout title="Logo lab · Sendspin visualiser">
+  <div class="lab">
+    <div class="ui">
+      <button data-control="mode">Toggle align</button>
+      <button data-control="guides">Toggle guides</button>
+      <button data-control="colours">Toggle colours</button>
+      <button data-control="anim">Animation: off</button>
+      <label>speed <input data-control="speed" type="range" min="0" max="120" value="40" step="1" /></label>
+      <label>dash <input data-control="dash" type="range" min="8" max="60" value="24" step="1" /></label>
+      <button data-control="random">Random: off</button>
+      <label>radius <input data-control="radius" type="range" min="0" max="3" value="0.8" step="0.1" /></label>
+      <button data-control="pulse">Pulse</button>
+      <button data-control="flash">Flash</button>
+      <button data-control="levels">Random levels</button>
+      <button data-control="beat">Beat 120: off</button>
+      <button data-control="reset">Reset</button>
+    </div>
+    <main class="stage"><Logo size="60vmin" /></main>
+    <nav class="links"><a href="/">Player</a> · <a href="/docs/">Docs</a></nav>
+  </div>
+  <script src="../scripts/lab.ts"></script>
+</Layout>
+
+<style>
+  .lab { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+  .ui { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 16px; }
+  .stage { display: grid; place-items: center; }
+  .links { padding: 16px; font-size: 13px; }
+</style>

@@ -1,3 +1,9 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Sendspin integration
+description: Roles, frame formats, the client patch, palette policy and hosting constraints.
+---
+
 # Sendspin integration
 
 The browser is a Sendspin **client**. Music Assistant (or `tools/testserver.py`) is the server. All
@@ -61,7 +67,7 @@ requires `rate_max` and `types` (and optional `spectrum`) *inside* `visualizer@v
 current spec moved them to `client/state`. The patch sends both. Unknown keys in `client/state`
 are ignored by 9.1.1.
 
-Build: see `tools/README.md`. Output is an ESM bundle in `vendor/sendspin/` (Opus fallback decoder
+Build: see `tools/README.md`. Output is an ESM bundle in `src/lib/sendspin/vendor/` (Opus fallback decoder
 as lazy chunks; Chrome uses WebCodecs and never loads them).
 
 ## Visualizer request used
@@ -93,7 +99,7 @@ frames older than 2 s on arrival are dropped. Beats arrive ~3 s early, periodic 
 | Input | Effect | Default |
 |---|---|---|
 | loudness | flow speed `8 + 120 · energy^1.6`, energy = attack 0.45 / release 0.08 smoothing of value/65535 | on |
-| beat | tempo clock (see `BEAT-SYNC.md`); optional pulse | lock on, pulse off |
+| beat | tempo clock (see [Beat sync](/docs/beat-sync)); optional pulse | lock on, pulse off |
 | peak | optional flash; onset tempo fallback input | flash off, fallback on |
 | spectrum | optional per-arc brightness, per-band auto-gain (floor/peak trackers) | off |
 | color | shape colours and page background | on |

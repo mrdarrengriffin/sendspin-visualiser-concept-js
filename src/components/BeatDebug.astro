@@ -1,0 +1,19 @@
+---
+/**
+ * Beat debug: an LED that brightens into each predicted beat, a text line with tempo and per-path
+ * lock state, the scrolling beat lane (beat ticks vs dash entries), and the raw feature readout.
+ */
+---
+<div class="beat" data-beat>
+  <div class="row"><span class="led" data-beat="led"></span><span data-beat="text"></span></div>
+  <canvas class="lane" data-beat="lane" width="1040" height="150"></canvas>
+  <div class="viz" data-beat="viz"></div>
+</div>
+
+<style>
+  .beat { text-align: center; }
+  .row { font: 11px monospace; color: var(--muted); margin-top: 10px; display: flex; gap: 10px; align-items: center; justify-content: center; white-space: pre; }
+  .led { width: 12px; height: 12px; border-radius: 50%; background: var(--fg); opacity: 0.15; flex: none; }
+  .lane { display: block; width: min(60vmin, 520px); height: 75px; margin: 8px auto 0; border-radius: 6px; background: #0004; }
+  .viz { font: 11px monospace; color: var(--muted); margin-top: 8px; white-space: pre; }
+</style>

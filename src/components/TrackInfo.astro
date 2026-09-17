@@ -1,0 +1,16 @@
+---
+/** Title, artist/album and a progress bar, filled by the player script from the metadata role. */
+---
+<div class="track">
+  <div class="title" data-track="title">&nbsp;</div>
+  <div class="artist" data-track="artist">&nbsp;</div>
+  <div class="progress"><div data-track="progress"></div></div>
+</div>
+
+<style>
+  .track { text-align: center; padding: 16px 16px 0; }
+  .title { font-size: 20px; font-weight: 600; }
+  .artist { color: var(--muted); margin-top: 2px; }
+  .progress { width: min(60vmin, 520px); height: 3px; background: #fff2; margin: 12px auto 0; border-radius: 2px; overflow: hidden; }
+  .progress > div { height: 100%; width: 0; background: var(--fg); opacity: 0.7; }
+</style>

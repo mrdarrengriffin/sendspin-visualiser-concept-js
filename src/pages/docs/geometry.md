@@ -1,3 +1,9 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Logo geometry
+description: The eight arcs, two S’s, the slash, chains per view, bridges and the rendering model.
+---
+
 # Logo geometry
 
 Everything here is derived from `sendspin.svg` (viewBox `0 0 128 128`). All numbers are SVG user
@@ -87,7 +93,7 @@ chains.offset = [ [B0, A1], [B1, A3], [B3, A4], [A0], [B4] ]
 `A0` (outer top cap) and `B4` (outer bottom cap) face empty slash and stand alone.
 
 Chain lengths `T` (sum of arc lengths plus 8 per internal bridge): joined 232.8 each; offset
-129.0, 102.2, 129.0, 48.7, 48.7. These drive the beat lock (see `BEAT-SYNC.md`).
+129.0, 102.2, 129.0, 48.7, 48.7. These drive the beat lock (see [Beat sync](/docs/beat-sync)).
 
 Face positions along the slash (projection onto `U`), offset view, for reference:
 upper-left bank: B4 −62.24, A4 −46.24, A1 −16.24 and 45.76, B1 −0.24 and 29.76;
@@ -110,7 +116,7 @@ state the shear is the identity.
 ## Rendering model
 
 The arcs and bridge halves are **geometry only**. Every visible shape is a dash in the flow queue
-(see `ANIMATION.md`), rendered as one or more clones of the underlying piece paths showing only the
+(see [Animation](/docs/animation)), rendered as one or more clones of the underlying piece paths showing only the
 dash's range via `stroke-dasharray = "0 a b 100000"` (a = start along the piece, b = length). A dash
 that straddles two pieces is two clones in the same colour, so a shape never changes colour
 mid-way. Butt line caps throughout.
@@ -119,7 +125,7 @@ Corner rounding is a whole-drawing SVG filter: Gaussian blur (`stdDeviation` 0.8
 steep alpha ramp (`feComponentTransfer` linear, slope 12, intercept −5.5). Straight edges stay put,
 convex corners round by roughly the blur radius. It must be applied to the union of arcs and
 bridges, never per element, or joins show. It is the most expensive part of rendering; see
-`PORTING.md`.
+[Porting](/docs/porting).
 
 Debug overlays (corner guides, beat markers) live in a separate `overlay` group outside the filter
 and are translated with the halves via two matching guide groups.
