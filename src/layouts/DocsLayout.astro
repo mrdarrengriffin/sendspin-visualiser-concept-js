@@ -1,4 +1,5 @@
 ---
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 import Layout from './Layout.astro';
 
 interface Props {
@@ -6,19 +7,19 @@ interface Props {
 }
 const { frontmatter } = Astro.props;
 const pages = [
-  { href: '/docs/', label: 'Overview' },
-  { href: '/docs/geometry', label: 'Geometry' },
-  { href: '/docs/animation', label: 'Animation' },
-  { href: '/docs/beat-sync', label: 'Beat sync' },
-  { href: '/docs/sendspin-integration', label: 'Sendspin integration' },
-  { href: '/docs/porting', label: 'Porting' },
+  { href: `${base}/docs/`, label: 'Overview' },
+  { href: `${base}/docs/geometry`, label: 'Geometry' },
+  { href: `${base}/docs/animation`, label: 'Animation' },
+  { href: `${base}/docs/beat-sync`, label: 'Beat sync' },
+  { href: `${base}/docs/sendspin-integration`, label: 'Sendspin integration' },
+  { href: `${base}/docs/porting`, label: 'Porting' },
 ];
 ---
 <Layout title={`${frontmatter.title} · Sendspin visualiser`} description={frontmatter.description}>
   <div class="docs">
     <nav>
-      <a class="brand" href="/">Sendspin visualiser</a>
-      <a href="/lab">Lab</a>
+      <a class="brand" href={`${base}/`}>Sendspin visualiser</a>
+      <a href={`${base}/lab`}>Lab</a>
       <span class="sep">Docs</span>
       {pages.map((p) => <a href={p.href} aria-current={Astro.url.pathname.replace(/\/$/, '') === p.href.replace(/\/$/, '') ? 'page' : undefined}>{p.label}</a>)}
     </nav>

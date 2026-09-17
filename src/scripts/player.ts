@@ -260,7 +260,11 @@ const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
 el.url.value = localStorage.getItem('sendspin.url') ?? (isLocal ? 'http://localhost:8927' : '');
 if (location.protocol === 'https:') {
   el.httpsWarning.hidden = false;
-  el.httpLink.href = 'http://' + location.host + location.pathname + location.search;
+  // github.io redirects http:// back to https://, so the link is only offered elsewhere
+  if (!location.hostname.endsWith('github.io')) {
+    el.httpLink.hidden = false;
+    el.httpLink.href = 'http://' + location.host + location.pathname + location.search;
+  }
 }
 
 async function connect(): Promise<void> {
@@ -296,7 +300,7 @@ async function connect(): Promise<void> {
     el.connect.textContent = 'Disconnect';
     el.status.textContent = 'connected';
   } catch (e) {
-    const blocked = location.protocol === 'https:' ? ' (an HTTPS page cannot reach a ws:// server; use the http:// page)' : '';
+    const blocked = location.protocol === 'https:' ? ' (an HTTPS page cannot reach a ws:// server; serve the site over http://)' : '';
     el.status.textContent = `failed: ${(e as Error)?.message ?? e}${blocked}`;
     console.error(e);
     player = null;

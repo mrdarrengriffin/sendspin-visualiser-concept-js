@@ -2,8 +2,12 @@
 /** Shown by the player script when the page is served over https:// (ws:// to a LAN server is then blocked). */
 ---
 <div class="https-warning" data-https-warning hidden>
-  This page is loaded over HTTPS, so your browser will block the plain WebSocket connection to a
-  Music Assistant on your network. Open the <a data-http-link href="#">http:// version of this page</a> instead.
+  This page is loaded over HTTPS, so your browser blocks the plain <code>ws://</code> connection to a
+  Music Assistant on your network (mixed content). The lab and the docs work here; to connect, serve
+  the site over plain <code>http://</code>: <code>git clone</code> the
+  <a href="https://github.com/mrdarrengriffin/sendspin-visualiser-concept-js">repository</a> and run
+  <code>npm install &amp;&amp; npm run dev</code>, or copy <code>dist/</code> to an http host.
+  <a data-http-link href="#" hidden>Try the http:// address of this page</a>.
 </div>
 
 <style>

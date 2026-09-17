@@ -37,10 +37,13 @@ Sendspin endpoint is a plain `ws://` WebSocket (the protocol encrypts inside it 
 browsers block `ws://` connections from an HTTPS page. The player detects an HTTPS load and shows a
 link to the http:// copy.
 
-`.github/workflows/deploy.yml` builds and deploys to GitHub Pages on every push to `main`. On a
-custom domain, untick "Enforce HTTPS" in the Pages settings so the `http://` address stays
-reachable; the default `*.github.io` domain enforces HTTPS and will not work for connecting. If the
-site is served from a sub-path, set `base` in `astro.config.mjs`.
+`.github/workflows/deploy.yml` builds and deploys to GitHub Pages on every push to `main`:
+**https://mrdarrengriffin.github.io/sendspin-visualiser-concept-js/** (`site` and `base` in
+`astro.config.mjs`). github.io enforces HTTPS, so on that address the **lab and docs work but the
+player cannot connect** to a Music Assistant; it says so on the page. To connect, run `npm run dev`
+locally or copy `dist/` to any host that serves plain `http://` (on a custom Pages domain, untick
+"Enforce HTTPS"). Markdown links in the docs are rewritten onto the base path by a small rehype
+plugin in the config, so keep them root-absolute (`/docs/...`).
 
 Browsers are also tightening rules for public pages talking to private networks. Serving the page
 from the Music Assistant host itself, or over WebRTC through the MA API as MA's own frontend does,

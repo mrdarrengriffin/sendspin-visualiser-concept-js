@@ -1,4 +1,5 @@
 ---
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 import Layout from '../layouts/Layout.astro';
 import Logo from '../components/Logo.astro';
 ---
@@ -20,7 +21,7 @@ import Logo from '../components/Logo.astro';
       <button data-control="reset">Reset</button>
     </div>
     <main class="stage"><Logo size="60vmin" /></main>
-    <nav class="links"><a href="/">Player</a> · <a href="/docs/">Docs</a></nav>
+    <nav class="links"><a href={`${base}/`}>Player</a> · <a href={`${base}/docs/`}>Docs</a></nav>
   </div>
   <script src="../scripts/lab.ts"></script>
 </Layout>
