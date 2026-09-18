@@ -189,19 +189,38 @@ Measured: on a clear-pulse track it locked at the correct 123 BPM with scores 0.
 needs 6 onsets and two agreeing estimates, about 4 s of clear beat. Octave errors are possible on
 ambiguous material; there is no downbeat information.
 
-## What Music Assistant actually does (as of its dev branch, Sept 2026)
+## What Music Assistant actually does (dev branch, September 2026)
 
-- Beats come **only** from the `smart_fades` audio-analysis provider (offline neural beat tracker,
-  5–10 s per track). No provider → `beat` never offered.
-- On track start (and after a seek) it pushes the analysis' beat list from the current position
-  onward, all at once. If analysis isn't ready it polls every 3 s for up to 90 s, then withdraws
-  `beat` from the stream (`stream/start` re-sent without it). So beats can appear seconds into a
-  track, or after a rewind, or not at all.
-- Beats stop where the analysis' list ends; the stream continues without them. That is why the
-  client coasts.
-- `tracks_downbeats` is false; downbeat flags are always 0.
-- The spec has no tempo field. A BPM plus reference beat in the visualizer role would remove all
-  of the estimation above; worth proposing.
+Confirmed against the MA server source (`providers/sendspin/player.py`, `controllers/streams/audio_analysis.py`,
+`models/audio_analysis.py`) and the MA team:
+
+- **Beats come from MA's audio analysis store**, not from live analysis of the stream. The `smart_fades`
+  analysis provider runs the *Beat This!* neural beat tracker per track and stores one `audio_analysis`
+  row per track and provider: scalar `bpm`, `beats_per_bar`, key/mode and descriptors in a JSON header,
+  and packed arrays in a binary payload: `beats` (seconds), `downbeats` (bar starts), energy and band
+  envelopes, a CLAP embedding. Analysis runs in the background over the library and on demand when a
+  track starts (5–10 s); a track without a row yet gets no beats. That is why some tracks have beats and
+  others do not, and why a rewind can suddenly produce them.
+- **The whole beat list is pushed at once**, anchored to the track's position in the flow stream:
+  every `beats[i]` becomes `anchor + beats[i]` with `is_downbeat = beats[i] in downbeats`. Beats already
+  in the past are skipped. If analysis is not ready, MA polls every 3 s for up to 90 s (30 attempts), then
+  marks beats unavailable and re-sends `stream/start` without `beat`.
+- **Re-push only on track change or seek**: the schedule is resent when the anchor moves by more than
+  500 ms. A re-push can arrive without a `stream/clear`, shifted by up to that much, which is the
+  same-period, new-phase case the clock handles with a phase relock.
+- **Downbeats exist in the data.** MA flags `is_downbeat` per beat when the analysis has a
+  `downbeats` array. Whether the wire flag reaches the client depends on the stream's
+  `tracks_downbeats`; in the sessions measured so far it was `false` and every flag was 0. If they do
+  arrive, the natural use is bar parity: a two-beat dash (`div 0.5`) should enter on the downbeat.
+- **The tempo is known to the server but not to the protocol.** `bpm` and `beats_per_bar` sit in the
+  analysis header and MA exposes them to its own frontend, but the visualizer `stream/start` object has
+  no tempo field, so every client re-derives the tempo from beat timestamps. A `bpm` + `beats_per_bar`
+  hint on `stream/start` (and `tracks_downbeats: true` when downbeats exist) would remove the whole
+  estimator below the phase step and settle the octave question. Worth proposing to the Sendspin spec.
+- **MA's own Hue Entertainment plugin** consumes the same beat schedule the same way: beats arrive in
+  advance, segments are rendered between consecutive scheduled beats with downbeats hitting harder,
+  and when no schedule exists it falls back to walking the palette on `peak` (onset) frames. This
+  visualiser's design is the same shape, plus the lock that keeps the grid through fills and gaps.
 
 ## Server-side gotcha for anyone writing a Sendspin server
 
