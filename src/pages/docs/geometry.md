@@ -92,7 +92,8 @@ chains.offset = [ [B0, A1], [B1, A3], [B3, A4], [A0], [B4] ]
 
 `A0` (outer top cap) and `B4` (outer bottom cap) face empty slash and stand alone.
 
-Chain lengths `T` (sum of arc lengths plus 8 per internal bridge): joined 232.8 each; offset
+Chain lengths `T` (sum of arc lengths plus 8 per internal bridge): joined 240.8 each (four arcs
+216.8 plus three bridges); offset
 129.0, 102.2, 129.0, 48.7, 48.7. These drive the beat lock (see [Beat sync](/docs/beat-sync)).
 
 Face positions along the slash (projection onto `U`), offset view, for reference:
