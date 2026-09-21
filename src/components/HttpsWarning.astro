@@ -19,7 +19,9 @@
 </div>
 
 <style>
-  .route-note { background: #2a3a55; color: #fff; padding: 10px 16px; font-size: 14px; line-height: 1.45; }
+  .route-note { background: #2a3a55; color: #fff; padding: 10px var(--gutter); font-size: 14px; line-height: 1.45; }
   .route-note a { color: #fff; font-weight: 600; }
-  .route-note code { background: #fff2; padding: 1px 5px; border-radius: 4px; }
+  .route-note code { background: #fff2; padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+
+  @media (max-width: 760px) { .route-note { font-size: 13px; } }
 </style>

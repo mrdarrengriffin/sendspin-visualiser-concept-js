@@ -2,6 +2,9 @@
 /**
  * Beat debug: an LED that brightens into each predicted beat, a text line with tempo and per-path
  * lock state, the scrolling beat lane (beat ticks vs dash entries), and the raw feature readout.
+ *
+ * The two text lines are monospace and can be far wider than a phone; they scroll inside their own
+ * box rather than widening the page.
  */
 ---
 <div class="beat" data-beat>
@@ -11,9 +14,16 @@
 </div>
 
 <style>
-  .beat { text-align: center; }
-  .row { font: 11px monospace; color: var(--muted); margin-top: 10px; display: flex; gap: 10px; align-items: center; justify-content: center; white-space: pre; }
+  .beat { text-align: center; max-width: 100%; }
+  /* safe center: centred while the line fits, left-aligned once it does not, so the start of an
+     overflowing line stays reachable instead of being clipped on both sides. */
+  .row { font: 11px monospace; color: var(--muted); margin-top: 10px; display: flex; gap: 10px; align-items: center; justify-content: safe center; white-space: pre; overflow-x: auto; }
   .led { width: 12px; height: 12px; border-radius: 50%; background: var(--fg); opacity: 0.15; flex: none; }
-  .lane { display: block; width: min(60vmin, 520px); height: 75px; margin: 8px auto 0; border-radius: 6px; background: #0004; }
-  .viz { font: 11px monospace; color: var(--muted); margin-top: 8px; white-space: pre; }
+  .lane { display: block; width: min(100%, 520px); height: 75px; margin: 8px auto 0; border-radius: 6px; background: #0004; }
+  .viz { font: 11px monospace; color: var(--muted); margin-top: 8px; display: flex; justify-content: safe center; white-space: pre; overflow-x: auto; }
+
+  @media (max-width: 760px) {
+    .row, .viz { font-size: 10px; overscroll-behavior-x: contain; }
+    .lane { height: 96px; }
+  }
 </style>

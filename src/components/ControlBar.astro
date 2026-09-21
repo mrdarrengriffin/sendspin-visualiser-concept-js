@@ -2,61 +2,121 @@
 /**
  * The player's control bar. Everything is addressed by data-control="<name>" so the script never
  * depends on ids; see src/scripts/player.ts for the behaviour behind each control.
+ *
+ * Layout: on a wide screen the .line wrappers are display:contents, so every control sits in one
+ * wrapping flex row exactly as before. Under 760px the wrappers become rows of their own —
+ * connect, then transport — and the three setting groups collapse behind the "settings" button
+ * (data-control="more"), which the script toggles.
  */
 ---
 <div class="bar">
-  <select data-control="route" aria-label="Connection route" title="direct: plain ws:// to Music Assistant on your LAN (needs an http:// or LAN-served page). remote: WebRTC through Music Assistant remote access, works from any page and any network.">
-    <option value="auto">auto</option>
-    <option value="ws">direct (LAN)</option>
-    <option value="webrtc">remote (WebRTC)</option>
-  </select>
-  <input data-control="url" type="text" placeholder="http://<music-assistant-ip>:8927" aria-label="Music Assistant address" />
-  <input data-control="remote-id" type="text" placeholder="Remote ID (Settings → Remote access)" aria-label="Music Assistant Remote ID" size="28" spellcheck="false" autocapitalize="characters" hidden />
-  <button data-control="connect">Connect</button>
-  <span class="status" data-control="status">disconnected</span>
-  <span class="spacer"></span>
+  <div class="line conn">
+    <select data-control="route" aria-label="Connection route" title="direct: plain ws:// to Music Assistant on your LAN (needs an http:// or LAN-served page). remote: WebRTC through Music Assistant remote access, works from any page and any network.">
+      <option value="auto">auto</option>
+      <option value="ws">direct (LAN)</option>
+      <option value="webrtc">remote (WebRTC)</option>
+    </select>
+    <input data-control="url" type="text" placeholder="http://<music-assistant-ip>:8927" aria-label="Music Assistant address" />
+    <input data-control="remote-id" type="text" placeholder="Remote ID (Settings → Remote access)" aria-label="Music Assistant Remote ID" size="28" spellcheck="false" autocapitalize="characters" hidden />
+    <button data-control="connect">Connect</button>
+    <span class="status" data-control="status">disconnected</span>
+    <span class="spacer"></span>
+  </div>
 
-  <span class="group" role="group" aria-label="Transport">
-    <button data-cmd="previous" title="Previous">⏮</button>
-    <button data-cmd="play" title="Play">▶</button>
-    <button data-cmd="pause" title="Pause">⏸</button>
-    <button data-cmd="next" title="Next">⏭</button>
-    <label>vol <input data-control="vol" type="range" min="0" max="100" value="60" /></label>
-  </span>
+  <div class="line transport">
+    <span class="group" role="group" aria-label="Transport">
+      <button data-cmd="previous" title="Previous" aria-label="Previous">⏮</button>
+      <button data-cmd="play" title="Play" aria-label="Play">▶</button>
+      <button data-cmd="pause" title="Pause" aria-label="Pause">⏸</button>
+      <button data-cmd="next" title="Next" aria-label="Next">⏭</button>
+      <label class="wide">vol <input data-control="vol" type="range" min="0" max="100" value="60" /></label>
+    </span>
+  </div>
 
-  <span class="group" role="group" aria-label="Music mapping">
-    <label><input data-control="react" type="checkbox" checked /> react</label>
-    <label><input data-control="pulse" type="checkbox" /> pulse</label>
-    <label><input data-control="flash" type="checkbox" /> flash</label>
-    <label><input data-control="spectrum" type="checkbox" /> spectrum</label>
-    <label>sat <input data-control="sat" type="range" min="1" max="2.5" value="1" step="0.1" /></label>
-  </span>
+  <button class="more-toggle" data-control="more" aria-expanded="false" aria-controls="control-settings">settings</button>
 
-  <span class="group" role="group" aria-label="Beat sync">
-    <label><input data-control="lock" type="checkbox" checked /> beat lock</label>
-    <label title="guess the tempo from onsets when the server sends no beats"><input data-control="onsets" type="checkbox" checked /> onset tempo</label>
-    <label title="dashes per beat for paths 0-4; fractions allowed, e.g. 0.5 = one dash spanning two beats">
-      divs <input data-control="divs" type="text" value="0.5,1,0.5,1,1" size="12" />
-    </label>
-    <label title="shift the visual beat later (+) or earlier (-) to match what you hear">
-      offset <input data-control="offset" type="range" min="-400" max="400" value="0" step="10" />
-      <span data-control="offset-value">0 ms</span>
-    </label>
-  </span>
+  <div class="line settings" id="control-settings" data-control="settings">
+    <span class="group" role="group" aria-label="Music mapping">
+      <label><input data-control="react" type="checkbox" checked /> react</label>
+      <label><input data-control="pulse" type="checkbox" /> pulse</label>
+      <label><input data-control="flash" type="checkbox" /> flash</label>
+      <label><input data-control="spectrum" type="checkbox" /> spectrum</label>
+      <label class="wide">sat <input data-control="sat" type="range" min="1" max="2.5" value="1" step="0.1" /></label>
+    </span>
 
-  <span class="group" role="group" aria-label="View">
-    <label><input data-control="debug" type="checkbox" checked /> debug</label>
-    <label><input data-control="markers" type="checkbox" checked /> markers</label>
-    <button data-control="mode">joined view</button>
-    <button data-control="guides">guides</button>
-  </span>
+    <span class="group" role="group" aria-label="Beat sync">
+      <label><input data-control="lock" type="checkbox" checked /> beat lock</label>
+      <label title="guess the tempo from onsets when the server sends no beats"><input data-control="onsets" type="checkbox" checked /> onset tempo</label>
+      <label title="dashes per beat for paths 0-4; fractions allowed, e.g. 0.5 = one dash spanning two beats">
+        divs <input data-control="divs" type="text" value="0.5,1,0.5,1,1" size="12" />
+      </label>
+      <label class="wide" title="shift the visual beat later (+) or earlier (-) to match what you hear">
+        offset <input data-control="offset" type="range" min="-400" max="400" value="0" step="10" />
+        <span data-control="offset-value">0 ms</span>
+      </label>
+    </span>
+
+    <span class="group" role="group" aria-label="View">
+      <label><input data-control="debug" type="checkbox" checked /> debug</label>
+      <label><input data-control="markers" type="checkbox" checked /> markers</label>
+      <button data-control="mode">joined view</button>
+      <button data-control="guides">guides</button>
+    </span>
+  </div>
 </div>
 
 <style>
-  .bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 12px 16px; font-size: 13px; }
-  .bar input[type="text"][data-control="url"] { width: 260px; }
-  .bar input[type="text"][data-control="remote-id"] { width: 260px; font-family: ui-monospace, monospace; letter-spacing: 0.04em; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 12px var(--gutter); font-size: 13px; }
+  .line { display: contents; }
+  .bar .conn input[type="text"] { width: 260px; }
+  .bar input[data-control="remote-id"] { font-family: ui-monospace, monospace; letter-spacing: 0.04em; }
   .status { color: var(--muted); }
   .spacer { flex: 1; }
   .group { display: inline-flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; padding-left: 10px; border-left: 1px solid #fff2; }
+  .more-toggle { display: none; }
+
+  /* Narrow, or short and sideways: the three setting groups fold behind one button. */
+  @media (max-width: 760px), (max-height: 520px) and (orientation: landscape) {
+    .more-toggle { display: block; }
+    .more-toggle::after { content: " ▾"; }
+    .more-toggle[aria-expanded="true"]::after { content: " ▴"; }
+    .settings:not([data-open]) { display: none; }
+  }
+
+  /* ---------------------------------------------------- phones, upright bar */
+  @media (max-width: 760px) {
+    .bar {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+      padding: 10px var(--gutter);
+      padding-left: max(var(--gutter), var(--safe-l));
+      padding-right: max(var(--gutter), var(--safe-r));
+    }
+    .line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .spacer { display: none; }
+
+    /* Address on its own row; the route picker, Connect and the status share the next. */
+    .bar .conn input[type="text"] { flex: 1 1 100%; width: auto; order: -1; }
+    .conn select { flex: 1 1 8em; }
+    .conn button { flex: 0 0 auto; }
+    .status { flex: 0 1 auto; order: 1; margin-left: auto; text-align: right; }
+
+    /* Transport is the one thing you actually reach for on a phone: full-width, thumb-sized. */
+    .transport .group,
+    .settings .group { padding-left: 0; border-left: 0; }
+    .transport .group { flex: 1 1 100%; gap: 6px; }
+    .settings .group { flex: none; }
+    .transport button { flex: 1; font-size: 18px; line-height: 1; }
+    .transport label.wide { flex: 1 1 100%; }
+
+    .more-toggle { width: 100%; }
+    .settings { flex-direction: column; align-items: stretch; gap: 10px; }
+    .settings .group + .group { padding-top: 10px; border-top: 1px solid #fff2; }
+
+    /* Sliders and the divs field stretch instead of wrapping to a stub. */
+    label.wide { flex: 1 1 100%; }
+    label.wide input[type="range"] { flex: 1; }
+    .bar .settings input[type="text"] { flex: 1; width: auto; min-width: 6em; }
+  }
 </style>
