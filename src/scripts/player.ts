@@ -35,6 +35,7 @@ const el = {
   httpsWarning: document.querySelector<HTMLElement>('[data-https-warning]')!,
   themeColor: document.querySelector<HTMLMetaElement>('meta[data-theme-color]'),
   httpLink: document.querySelector<HTMLAnchorElement>('[data-http-link]')!,
+  dismissNote: control<HTMLButtonElement>('dismiss-note'),
 };
 
 // ------------------------------------------------------------------ logo
@@ -299,7 +300,22 @@ const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
 el.url.value = localStorage.getItem('sendspin.url') ?? (isLocal ? 'http://localhost:8927' : '');
 el.remoteId.value = localStorage.getItem('sendspin.remoteId') ?? '';
 showRoute();
-if (location.protocol === 'https:' && !onLan) {
+
+// The route note is dismissed with a cookie, scoped to this site's base path and kept for a year.
+const NOTE_COOKIE = 'sendspin_route_note';
+const NOTE_COOKIE_MAX_AGE = 365 * 24 * 60 * 60;
+const readCookie = (name: string): string | null => {
+  const prefix = `${name}=`;
+  const hit = document.cookie.split('; ').find((c) => c.startsWith(prefix));
+  return hit ? decodeURIComponent(hit.slice(prefix.length)) : null;
+};
+const writeCookie = (name: string, value: string, maxAge: number): void => {
+  const path = import.meta.env.BASE_URL || '/';
+  const secure = location.protocol === 'https:' ? '; secure' : '';
+  document.cookie = `${name}=${encodeURIComponent(value)}; path=${path}; max-age=${maxAge}; samesite=lax${secure}`;
+};
+
+if (location.protocol === 'https:' && !onLan && readCookie(NOTE_COOKIE) !== 'dismissed') {
   el.httpsWarning.hidden = false;
   // github.io redirects http:// back to https://, so the link is only offered elsewhere
   if (!location.hostname.endsWith('github.io')) {
@@ -307,6 +323,10 @@ if (location.protocol === 'https:' && !onLan) {
     el.httpLink.href = 'http://' + location.host + location.pathname + location.search;
   }
 }
+el.dismissNote.addEventListener('click', () => {
+  el.httpsWarning.hidden = true;
+  writeCookie(NOTE_COOKIE, 'dismissed', NOTE_COOKIE_MAX_AGE); // a browser that refuses it just shows the note again
+});
 
 // ------------------------------------------------------------------ connect / disconnect
 let remote: RemoteSendspinSocket | null = null;

@@ -4,24 +4,33 @@
  * ws:// socket to a LAN Music Assistant is blocked there (mixed content, and Chrome's Local Network
  * Access rule), so the player switches to the remote route: WebRTC through Music Assistant's own
  * remote access. The note tells the user what that needs.
+ *
+ * Dismissing it sets a cookie (see src/scripts/player.ts), so it stays gone on later visits.
+ *
+ * Keep inline tags on the same line as the word before them: Astro's HTML compression drops a
+ * newline that sits between text and a tag, which glues the two words together.
  */
 ---
 <div class="route-note" data-https-warning hidden>
-  This page is served over HTTPS from a public host, so the browser will not open a plain
-  <code>ws://</code> socket to a Music Assistant on your network. The player therefore connects the
-  way the Music Assistant app does from outside the home: over WebRTC through
-  <strong>Music Assistant remote access</strong>. In Music Assistant open
-  <em>Settings → Remote access</em>, enable it, and paste the <strong>Remote ID</strong> shown
-  there into the field above; no Home Assistant Cloud subscription is needed (it only adds TURN
-  relays for awkward networks). Prefer the direct <code>ws://</code> route? Serve the site from a
-  LAN address (<code>npm run dev</code>, or <code>dist/</code> on a LAN http host).
-  <a data-http-link href="#" hidden>Try the http:// address of this page</a>.
+  <p>
+    This page is served over HTTPS from a public host, so the browser will not open a plain <code>ws://</code>
+    socket to a Music Assistant on your network. The player therefore connects the way the Music Assistant app
+    does from outside the home: over WebRTC through <strong>Music Assistant remote access</strong>. In Music
+    Assistant open <em>Settings → Remote access</em>, enable it, and paste the <strong>Remote ID</strong> shown
+    there into the field above; no Home Assistant Cloud subscription is needed (it only adds TURN relays for
+    awkward networks). Prefer the direct <code>ws://</code> route? Serve the site from a LAN address
+    (<code>npm run dev</code>, or <code>dist/</code> on a LAN http host).{' '}
+    <a data-http-link href="#" hidden>Try the http:// address of this page</a>.
+  </p>
+  <button class="dismiss" data-control="dismiss-note" aria-label="Dismiss this note" title="Dismiss">✕</button>
 </div>
 
 <style>
-  .route-note { background: #2a3a55; color: #fff; padding: 10px var(--gutter); font-size: 14px; line-height: 1.45; }
+  .route-note { display: flex; gap: 12px; align-items: flex-start; background: #2a3a55; color: #fff; padding: 10px var(--gutter); font-size: 14px; line-height: 1.45; }
+  .route-note p { margin: 0; flex: 1; }
   .route-note a { color: #fff; font-weight: 600; }
   .route-note code { background: #fff2; padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  .dismiss { flex: none; padding: 2px 8px; background: #fff2; border-color: #fff4; line-height: 1.4; }
 
   @media (max-width: 760px) { .route-note { font-size: 13px; } }
 </style>
