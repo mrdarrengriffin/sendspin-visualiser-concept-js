@@ -22,6 +22,7 @@ const el = {
   sat: input('sat'), lock: input('lock'), onsets: input('onsets'), divs: input('divs'), offset: input('offset'),
   offsetValue: control('offset-value'), debug: input('debug'), markers: input('markers'),
   mode: control<HTMLButtonElement>('mode'), guides: control<HTMLButtonElement>('guides'),
+  more: control<HTMLButtonElement>('more'), settings: control('settings'),
   title: document.querySelector<HTMLElement>('[data-track="title"]')!,
   artist: document.querySelector<HTMLElement>('[data-track="artist"]')!,
   progress: document.querySelector<HTMLElement>('[data-track="progress"]')!,
@@ -32,6 +33,7 @@ const el = {
   viz: document.querySelector<HTMLElement>('[data-beat="viz"]')!,
   debugPanels: document.querySelectorAll<HTMLElement>('[data-palette], .beat[data-beat]'),
   httpsWarning: document.querySelector<HTMLElement>('[data-https-warning]')!,
+  themeColor: document.querySelector<HTMLMetaElement>('meta[data-theme-color]'),
   httpLink: document.querySelector<HTMLAnchorElement>('[data-http-link]')!,
 };
 
@@ -190,23 +192,35 @@ requestAnimationFrame(tick);
 // Time scrolls left; beat ticks are lines, dash entries are dots per path. Locked = dots on lines.
 const lctx = el.lane.getContext('2d')!;
 const LANE_PAST = 2400, LANE_FUTURE = 800;
+
+// Match the backing store to the CSS box (capped at 2x) so the lane is neither stretched nor
+// blurry: on a phone the box is much narrower and relatively taller than the markup's 1040x150.
+function sizeLane(): void {
+  const w = el.lane.clientWidth, h = el.lane.clientHeight;
+  if (!w || !h) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = Math.round(w * dpr), H = Math.round(h * dpr);
+  if (el.lane.width !== W || el.lane.height !== H) { el.lane.width = W; el.lane.height = H; }
+}
+new ResizeObserver(sizeLane).observe(el.lane);
 function drawLane(now: number, alive: boolean): void {
   const W = el.lane.width, H = el.lane.height, x0 = (W * LANE_PAST) / (LANE_PAST + LANE_FUTURE);
+  const s = H / 150; // marks scale with the lane, so they read the same on a phone as on a desktop
   const tx = (t: number) => x0 + ((t - now) * W) / (LANE_PAST + LANE_FUTURE);
   lctx.clearRect(0, 0, W, H);
   lctx.fillStyle = '#ffffff10'; lctx.fillRect(x0, 0, W - x0, H);
-  lctx.strokeStyle = '#ffffff90'; lctx.lineWidth = 2; lctx.beginPath(); lctx.moveTo(x0, 0); lctx.lineTo(x0, H); lctx.stroke();
+  lctx.strokeStyle = '#ffffff90'; lctx.lineWidth = 2 * s; lctx.beginPath(); lctx.moveTo(x0, 0); lctx.lineTo(x0, H); lctx.stroke();
   if (!alive) return;
   const Pms = clock.period / 1000;
-  lctx.lineWidth = 1; lctx.strokeStyle = '#ffffff55';
+  lctx.lineWidth = 1 * s; lctx.strokeStyle = '#ffffff55';
   for (let t = clock.nextLocal; t > now - LANE_PAST; t -= Pms) if (t <= now + LANE_FUTURE) { lctx.beginPath(); lctx.moveTo(tx(t), 0); lctx.lineTo(tx(t), H); lctx.stroke(); }
   for (let t = clock.nextLocal + Pms; t <= now + LANE_FUTURE; t += Pms) { lctx.beginPath(); lctx.moveTo(tx(t), 0); lctx.lineTo(tx(t), H); lctx.stroke(); }
   const paths = logo.beatDebug(), rowH = H / (paths.length + 1), cols = logo.state.dashColors;
   paths.forEach((p, i) => {
     const y = rowH * (i + 1), col = cols[i % cols.length];
-    lctx.fillStyle = '#ffffff70'; lctx.font = '16px monospace'; lctx.fillText(`p${p.path} n${p.n}`, 6, y + 6);
-    for (const t of p.entries) if (t > now - LANE_PAST) { lctx.fillStyle = col; lctx.beginPath(); lctx.arc(tx(t), y, 6, 0, 7); lctx.fill(); }
-    if (p.nextInMs !== null) { lctx.strokeStyle = col; lctx.lineWidth = 2; lctx.beginPath(); lctx.arc(tx(now + p.nextInMs), y, 6, 0, 7); lctx.stroke(); }
+    lctx.fillStyle = '#ffffff70'; lctx.font = `${16 * s}px monospace`; lctx.fillText(`p${p.path} n${p.n}`, 6 * s, y + 6 * s);
+    for (const t of p.entries) if (t > now - LANE_PAST) { lctx.fillStyle = col; lctx.beginPath(); lctx.arc(tx(t), y, 6 * s, 0, 7); lctx.fill(); }
+    if (p.nextInMs !== null) { lctx.strokeStyle = col; lctx.lineWidth = 2 * s; lctx.beginPath(); lctx.arc(tx(now + p.nextInMs), y, 6 * s, 0, 7); lctx.stroke(); }
   });
 }
 
@@ -221,6 +235,7 @@ function applyPalette(c: ColorState): void {
   logo.setDashColors(chosen.shapes); logo.recolor();
   document.documentElement.style.setProperty('--bg', chosen.background); logo.setBackground(chosen.background);
   document.documentElement.style.setProperty('--fg', chosen.foreground);
+  el.themeColor?.setAttribute('content', chosen.background); // mobile browser chrome follows the artwork
   const art = lastState?.serverState?.metadata?.artwork_url;
   el.palette.innerHTML = (art ? `<img src="${art}" alt="">` : '') + PALETTE_KEYS.map((key) => {
     const col = p[key];
@@ -385,6 +400,12 @@ el.vol.addEventListener('input', () => player?.setVolume(+el.vol.value));
 el.spectrum.addEventListener('change', () => { if (!el.spectrum.checked) logo.clearLevels(); });
 el.lock.addEventListener('change', () => { if (!el.lock.checked) logo.clearBeatClock(); });
 el.onsets.addEventListener('change', () => { clock.onsetFallback = el.onsets.checked; });
+// The settings groups collapse behind one button under 760px; see ControlBar.astro.
+el.more.addEventListener('click', () => {
+  const open = el.settings.toggleAttribute('data-open');
+  el.more.setAttribute('aria-expanded', String(open));
+});
+
 el.markers.addEventListener('change', () => logo.showBeatMarkers(el.markers.checked));
 el.debug.addEventListener('change', () => { if (!el.debug.checked) { el.markers.checked = false; logo.showBeatMarkers(false); } });
 el.mode.addEventListener('click', () => { logo.toggleMode(); el.mode.textContent = logo.state.mode === 'joined' ? 'offset view' : 'joined view'; });

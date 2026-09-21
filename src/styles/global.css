@@ -4,7 +4,15 @@
   --muted: #888;
   --accent: #e25c4c;
   color-scheme: dark;
+
+  /* Page gutter: wider on desktop, tight on phones, and clear of notches. */
+  --gutter: 16px;
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
 }
+
+*, *::before, *::after { box-sizing: border-box; }
 
 html, body {
   margin: 0;
@@ -12,8 +20,13 @@ html, body {
   background: var(--bg);
   color: var(--fg);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-text-size-adjust: 100%;
   transition: background 600ms ease, color 600ms ease;
 }
+
+/* A class rule such as .palette { display: flex } otherwise beats the UA's [hidden],
+   which is how the debug panels are switched off. */
+[hidden] { display: none !important; }
 
 button {
   padding: 6px 12px;
@@ -28,8 +41,9 @@ button {
 button:hover { background: #fff3; }
 button[aria-pressed="true"] { background: #fff4; border-color: #fff6; }
 
-input[type="text"] {
+input[type="text"], select {
   padding: 6px 8px;
+  max-width: 100%;
   background: #0006;
   color: inherit;
   border: 1px solid #fff3;
@@ -38,6 +52,21 @@ input[type="text"] {
   font-size: 13px;
 }
 
+input[type="range"] { min-width: 0; }
+
 label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
 
 a { color: #4cc9f0; }
+
+/* Touch: targets big enough to hit, and >= 16px text in fields so iOS does not zoom on focus. */
+@media (pointer: coarse) {
+  button { min-height: 40px; padding: 8px 14px; font-size: 14px; }
+  input[type="text"], select { min-height: 40px; font-size: 16px; }
+  input[type="range"] { height: 28px; }
+  input[type="checkbox"] { width: 20px; height: 20px; }
+  label { font-size: 14px; }
+}
+
+@media (max-width: 760px) {
+  :root { --gutter: 12px; }
+}

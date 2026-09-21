@@ -4,9 +4,16 @@
 <div class="palette" data-palette></div>
 
 <style is:global>
-  .palette { display: flex; gap: 10px; justify-content: center; align-items: flex-end; margin-top: 14px; min-height: 64px; font: 10px monospace; color: var(--muted); }
+  .palette { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; align-items: flex-end; margin-top: 14px; min-height: 64px; font: 10px monospace; color: var(--muted); }
+  .palette:empty { display: none; }
   .palette .sw { display: flex; flex-direction: column; align-items: center; gap: 4px; }
   .palette .sw i { display: block; width: 44px; height: 30px; border-radius: 6px; border: 1px solid #fff2; }
   .palette .sw.used i { outline: 2px solid var(--fg); outline-offset: 2px; }
   .palette img { width: 64px; height: 64px; border-radius: 6px; object-fit: cover; margin-right: 10px; }
+
+  @media (max-width: 760px) {
+    .palette { gap: 8px; }
+    .palette .sw i { width: 34px; height: 24px; }
+    .palette img { width: 48px; height: 48px; margin-right: 0; }
+  }
 </style>

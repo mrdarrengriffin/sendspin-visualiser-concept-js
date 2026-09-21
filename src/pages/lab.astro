@@ -20,15 +20,27 @@ import Logo from '../components/Logo.astro';
       <button data-control="beat">Beat 120: off</button>
       <button data-control="reset">Reset</button>
     </div>
-    <main class="stage"><Logo size="60vmin" /></main>
+    <main class="stage"><Logo /></main>
     <nav class="links"><a href={`${base}/`}>Player</a> · <a href={`${base}/docs/`}>Docs</a></nav>
   </div>
   <script src="../scripts/lab.ts"></script>
 </Layout>
 
 <style>
-  .lab { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
-  .ui { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 16px; }
-  .stage { display: grid; place-items: center; }
-  .links { padding: 16px; font-size: 13px; }
+  .lab { min-height: 100vh; min-height: 100dvh; display: grid; grid-template-rows: auto 1fr auto; grid-template-columns: minmax(0, 1fr); }
+  .ui { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 16px var(--gutter); }
+  .stage { --logo-size: min(60vmin, 520px); display: grid; place-items: center; padding: 0 var(--gutter); min-height: 0; }
+  .links { padding: 16px var(--gutter) calc(16px + var(--safe-b)); font-size: 13px; }
+
+  @media (max-width: 760px) {
+    /* Two columns of buttons; anything with a slider takes the full width. */
+    .ui { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px var(--gutter); }
+    .ui > label { grid-column: 1 / -1; }
+    .ui > label input[type="range"] { flex: 1; }
+    .stage { --logo-size: min(86vw, 46vh); }
+  }
+
+  @media (max-height: 520px) and (orientation: landscape) {
+    .stage { --logo-size: min(50vw, 72vh); }
+  }
 </style>
