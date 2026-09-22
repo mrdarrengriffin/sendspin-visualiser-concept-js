@@ -63,6 +63,20 @@ Per frame, a shape's colour = `mix(mix(bg, base, 0.5 + 0.5·level), white, 0.6·
 In the player, all three are opt-in and off by default; loudness drives speed instead (see
 [Sendspin integration](/docs/sendspin-integration)).
 
+### Paper grain
+
+An optional texture over the paths, in the same filter as the corner rounding, after it:
+
+- noise = `0.7 · fine + 0.3 · mottle`, both fractal noise fixed in logo space: fine at base
+  frequency 3.2 per unit, 3 octaves (features ≈ 0.3 units, about a pixel); mottle at 0.12, 2
+  octaves (≈ 8 units).
+- grey = `0.5 + 3·g · (noise − 0.5)` for strength `g` (0..1), clipped to the shapes, then
+  soft-light blended onto them. 0.5 grey is neutral, so the mean colour and every outline are
+  unchanged and each shape is still one colour, only textured.
+- Because the noise does not move with the dashes, they flow through it like ink over paper.
+
+The player uses `g = 0.35` (the **grain** toggle, on by default); the library default is 0.
+
 ## View switching
 
 `setMode('joined' | 'offset')` toggles a class; CSS translates each half (and its guide group) by
@@ -72,7 +86,7 @@ frame while the transition runs, then left alone.
 
 ## Public API of `mountLogo(container, opts)`
 
-`opts`: `speed`, `dash`, `colorA`, `background`, `radius`, `maxFps`, `joinMs`.
+`opts`: `speed`, `dash`, `colorA`, `background`, `radius`, `grain`, `maxFps`, `joinMs`.
 
 Returns:
 
@@ -81,7 +95,8 @@ Returns:
 | `setMode(m)`, `toggleMode()` | joined / offset view |
 | `setAnimating(bool)` | start flowing / re-form the logo |
 | `setSpeed(v)`, `setDash(len)`, `setRandom(bool)` | flow parameters |
-| `setRadius(r)` | corner rounding blur; 0 disables the filter |
+| `setRadius(r)` | corner rounding blur; 0 disables it |
+| `setGrain(g)` | paper grain over the paths, 0 (off) .. 1; the filter is removed when both are 0 |
 | `setDashColors(list)`, `setColors(a, b)`, `recolor()` | per-shape colours |
 | `setBackground(hex)`, `setColorEase(s)` | colour mixing reference and fade time |
 | `flash(x)`, `pulse(x)`, `setLevels([8])`, `clearLevels()` | music hooks (levels indexed by `BY_SIZE`) |

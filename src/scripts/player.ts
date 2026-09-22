@@ -20,7 +20,7 @@ const el = {
   connect: control<HTMLButtonElement>('connect'), status: control('status'),
   vol: input('vol'), react: input('react'), pulse: input('pulse'), flash: input('flash'), spectrum: input('spectrum'),
   sat: input('sat'), lock: input('lock'), onsets: input('onsets'), divs: input('divs'), offset: input('offset'),
-  offsetValue: control('offset-value'), debug: input('debug'), markers: input('markers'), backdrop: input('backdrop'),
+  offsetValue: control('offset-value'), debug: input('debug'), markers: input('markers'), backdrop: input('backdrop'), grain: input('grain'),
   mode: control<HTMLButtonElement>('mode'), guides: control<HTMLButtonElement>('guides'),
   more: control<HTMLButtonElement>('more'), settings: control('settings'),
   title: document.querySelector<HTMLElement>('[data-track="title"]')!,
@@ -45,6 +45,10 @@ const logo: Logo = mountLogo(document.querySelector<HTMLElement>('[data-logo]')!
   speed: 15, maxFps: +(params.get('fps') ?? 60) || 60,
 });
 logo.showBeatMarkers(el.markers.checked);
+// Paper grain over the paths; fine enough to read as texture, not as noise.
+const GRAIN = 0.35;
+logo.setGrain(el.grain.checked ? GRAIN : 0);
+el.grain.addEventListener('change', () => logo.setGrain(el.grain.checked ? GRAIN : 0));
 
 // ------------------------------------------------------------------ diagnostics
 // Every beat frame, tempo decision and stream event of the session; window.dumpLog() prints it.
