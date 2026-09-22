@@ -4,11 +4,13 @@ import Layout from '../layouts/Layout.astro';
 import HttpsWarning from '../components/HttpsWarning.astro';
 import ControlBar from '../components/ControlBar.astro';
 import Logo from '../components/Logo.astro';
+import Backdrop from '../components/Backdrop.astro';
 import TrackInfo from '../components/TrackInfo.astro';
 import PaletteStrip from '../components/PaletteStrip.astro';
 import BeatDebug from '../components/BeatDebug.astro';
 ---
 <Layout title="Sendspin visualiser">
+  <Backdrop />
   <div class="page">
     <HttpsWarning />
     <ControlBar />
@@ -27,7 +29,8 @@ import BeatDebug from '../components/BeatDebug.astro';
   /* 100dvh so the mobile URL bar collapsing does not leave a gap under the footer.
      minmax(0, 1fr): an implicit auto column would take its width from the widest debug line,
      stretching the control bar and the whole page sideways whenever debug is on. */
-  .page { min-height: 100vh; min-height: 100dvh; display: grid; grid-template-rows: auto auto 1fr auto; grid-template-columns: minmax(0, 1fr); }
+  .page { min-height: 100vh; min-height: 100dvh; display: grid; grid-template-rows: auto auto 1fr auto; grid-template-columns: minmax(0, 1fr);
+    position: relative; z-index: 1; } /* above the fixed artwork backdrop */
   .stage { display: grid; place-items: center; padding: 8px var(--gutter); min-height: 0; }
   .info { padding: 0 var(--gutter) calc(20px + var(--safe-b)); }
   .links { text-align: center; margin-top: 18px; font-size: 12px; color: var(--muted); }

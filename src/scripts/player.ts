@@ -20,7 +20,7 @@ const el = {
   connect: control<HTMLButtonElement>('connect'), status: control('status'),
   vol: input('vol'), react: input('react'), pulse: input('pulse'), flash: input('flash'), spectrum: input('spectrum'),
   sat: input('sat'), lock: input('lock'), onsets: input('onsets'), divs: input('divs'), offset: input('offset'),
-  offsetValue: control('offset-value'), debug: input('debug'), markers: input('markers'),
+  offsetValue: control('offset-value'), debug: input('debug'), markers: input('markers'), backdrop: input('backdrop'),
   mode: control<HTMLButtonElement>('mode'), guides: control<HTMLButtonElement>('guides'),
   more: control<HTMLButtonElement>('more'), settings: control('settings'),
   title: document.querySelector<HTMLElement>('[data-track="title"]')!,
@@ -32,6 +32,7 @@ const el = {
   lane: document.querySelector<HTMLCanvasElement>('[data-beat="lane"]')!,
   viz: document.querySelector<HTMLElement>('[data-beat="viz"]')!,
   debugPanels: document.querySelectorAll<HTMLElement>('[data-palette], .beat[data-beat]'),
+  backdropBox: document.querySelector<HTMLElement>('[data-backdrop]')!,
   httpsWarning: document.querySelector<HTMLElement>('[data-https-warning]')!,
   themeColor: document.querySelector<HTMLMetaElement>('meta[data-theme-color]'),
   httpLink: document.querySelector<HTMLAnchorElement>('[data-http-link]')!,
@@ -254,6 +255,30 @@ el.sat.addEventListener('input', () => { if (lastPalette) applyPalette(paletteTo
 const paletteToState = (p: Palette): ColorState => Object.fromEntries(PALETTE_KEYS.map((k) => [k, p[k] ? hexToArr(p[k]!) : null]));
 const hexToArr = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 
+// ------------------------------------------------------------------ backdrop
+// Blurred artwork behind the page. Each new artwork is preloaded, then faded in over the old one,
+// which fades out and is removed; a failed load just clears it.
+let backdropUrl: string | null = null;
+function setBackdrop(url: string | null): void {
+  if (!el.backdrop.checked) url = null;
+  if (url === backdropUrl) return;
+  backdropUrl = url;
+  const old = [...el.backdropBox.children];
+  const dropOld = () => old.forEach((o) => { o.classList.remove('shown'); setTimeout(() => o.remove(), 1500); });
+  if (!url) { dropOld(); return; }
+  const img = new Image();
+  img.alt = ''; img.decoding = 'async';
+  img.onload = () => {
+    if (backdropUrl !== url) return;
+    el.backdropBox.append(img);
+    void img.offsetWidth; // commit opacity 0 so the fade runs
+    img.classList.add('shown'); dropOld();
+  };
+  img.onerror = () => { if (backdropUrl === url) dropOld(); };
+  img.src = url;
+}
+el.backdrop.addEventListener('change', () => setBackdrop(lastState?.serverState?.metadata?.artwork_url ?? null));
+
 // ------------------------------------------------------------------ server state
 function onState(state: PlayerState): void {
   lastState = state;
@@ -268,6 +293,7 @@ function onState(state: PlayerState): void {
   }
   el.title.textContent = m?.title || (player ? 'Nothing playing' : ' ');
   el.artist.textContent = [m?.artist, m?.album].filter(Boolean).join(' · ') || ' ';
+  setBackdrop(m?.artwork_url ?? null);
 
   const c = state.serverState?.color;
   if (c && c.timestamp !== lastColorTs) {
@@ -413,7 +439,7 @@ function disconnect(): void {
   const r = remote; remote = null; r?.close();
   player = null; streaming = false;
   el.connect.textContent = 'Connect'; el.status.textContent = 'disconnected';
-  logo.setAnimating(false); clock.reset('disconnect');
+  logo.setAnimating(false); clock.reset('disconnect'); setBackdrop(null);
 }
 el.connect.addEventListener('click', () => (player ? disconnect() : connect()));
 
