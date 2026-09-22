@@ -41,7 +41,7 @@ const el = {
 // ------------------------------------------------------------------ logo
 const params = new URLSearchParams(location.search);
 const logo: Logo = mountLogo(document.querySelector<HTMLElement>('[data-logo]')!, {
-  speed: 30, maxFps: +(params.get('fps') ?? 60) || 60,
+  speed: 15, maxFps: +(params.get('fps') ?? 60) || 60,
 });
 logo.showBeatMarkers(el.markers.checked);
 
@@ -87,6 +87,10 @@ window.clock = clock;
 // Loudness -> flow speed, in units/s: 8 at silence, 80 at full scale, with the top flattened
 // (exponent 1.4) so loud passages do not race. energy is the smoothed loudness, 0..1.
 const speedForEnergy = (energy: number) => 8 + 72 * Math.pow(energy, 1.4);
+// Until the logo is beat-locked the flow runs at half that speed, so the idle drift reads as a
+// resting state; the lock then picks its own speed from the full, unscaled target.
+const IDLE_SPEED_SCALE = 0.5;
+let baseSpeed = 30;
 
 // ------------------------------------------------------------------ frame queue
 // Frames carry a server-clock "display at" timestamp; hold them until the player's time filter says
@@ -145,7 +149,8 @@ function apply(f: VisualizerFrame): void {
 function tick(): void {
   release();
   clock.poll();
-  if (streaming && el.react.checked) logo.setSpeed(speedForEnergy(energy.v));
+  if (streaming && el.react.checked) baseSpeed = speedForEnergy(energy.v);
+  logo.setSpeed(published && el.lock.checked ? baseSpeed : baseSpeed * IDLE_SPEED_SCALE);
 
   const meta = lastState?.serverState?.metadata;
   if (meta?.progress && player) {
