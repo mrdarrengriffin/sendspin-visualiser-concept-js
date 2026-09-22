@@ -16,6 +16,7 @@ export { mixHex } from '../color';
 const NS = 'http://www.w3.org/2000/svg';
 const WHITE: RGB = [255, 255, 255];
 const RAMP_IN = 1.0;   // s, speed ramp when a path starts
+const UNLOCK_TAU = 0.5; // s, a path leaving the beat lock eases from its locked speed with this time constant
 const DECEL_T = 1.4;   // s, ease-out horizon when a path stops on the logo
 
 export interface LogoOptions {
@@ -54,7 +55,7 @@ interface Marker { ring: SVGCircleElement; label: SVGTextElement }
 interface Chain {
   segs: Segment[]; bridges: Bridge[]; pieces: Piece[]; T: number;
   stream: QueueEl[]; phase: number; running: boolean; stopAt: number | null; decel: number | null; startedAt: number;
-  pool: Map<string, SVGPathElement>; beat: BeatState | null; div: number | null; markers: Marker[]; bridgesPlaced: boolean;
+  pool: Map<string, SVGPathElement>; beat: BeatState | null; dv: number; div: number | null; markers: Marker[]; bridgesPlaced: boolean;
 }
 interface ModeState { layer: SVGGElement; chains: Chain[] }
 
@@ -194,7 +195,7 @@ export function mountLogo(container: HTMLElement, opts: LogoOptions = {}) {
         pieces.push({ s0, len: seg.len, lead: 0, parent: halves[seg.half], d: seg.p.getAttribute('d')!, seg, cls: seg.s });
         s0 += seg.len;
       });
-      return { segs, bridges, pieces, T, stream: [], phase: 0, running: false, stopAt: null, decel: null, startedAt: 0, pool: new Map(), beat: null, div: null, markers: [], bridgesPlaced: false };
+      return { segs, bridges, pieces, T, stream: [], phase: 0, running: false, stopAt: null, decel: null, startedAt: 0, pool: new Map(), beat: null, dv: 0, div: null, markers: [], bridgesPlaced: false };
     });
     MODES[name] = { layer, chains };
   }
@@ -419,7 +420,8 @@ export function mountLogo(container: HTMLElement, opts: LogoOptions = {}) {
       const locked = beatOn() && state.animating && chain.stopAt === null;
       if (chain.running) {
         const ramp = smoothstep((now - chain.startedAt) / 1000 / RAMP_IN);
-        let vel = locked ? beatSetup(chain).v * ramp : vCur * ramp;
+        if (locked) chain.dv = 0; else chain.dv *= Math.exp(-dt / UNLOCK_TAU);
+        let vel = locked ? beatSetup(chain).v * ramp : Math.max(0, vCur + chain.dv) * ramp;
         if (chain.stopAt !== null) {
           const r = chain.stopAt - chain.phase;
           if (chain.decel === null) chain.decel = Math.min(r, (vel * DECEL_T) / 2);
@@ -484,7 +486,10 @@ export function mountLogo(container: HTMLElement, opts: LogoOptions = {}) {
       else b.anchor = nextBeatAt - Math.round((nextBeatAt - b.anchor) / Pms) * Pms;
       b.period = period; b.nextAt = nextBeatAt; b.on = true;
     },
-    clearBeatClock() { state.beat.on = false; for (const name of ['joined', 'offset'] as ViewMode[]) for (const c of MODES[name].chains) c.beat = null; },
+    clearBeatClock() {
+      // Each path leaves the lock at the speed it was flowing; the difference to the free flow decays.
+      if (beatOn()) for (const c of MODES[state.mode].chains) if (c.beat?.v) c.dv = c.beat.v - vCur;
+      state.beat.on = false; for (const name of ['joined', 'offset'] as ViewMode[]) for (const c of MODES[name].chains) c.beat = null; },
     /** Shift the visual grid later (+ms) or earlier to match output latency the browser cannot see. */
     setBeatOffset(ms: number) { state.beat.offsetMs = ms || 0; },
     /** Dashes per beat for every path; fractions allowed (0.5 = one dash spanning two beats). */

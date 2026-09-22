@@ -147,7 +147,7 @@ frames older than 2 s on arrival are dropped. Beats arrive ~3 s early, periodic 
 | peak | optional flash; onset tempo fallback input | flash off, fallback on |
 | spectrum | optional per-arc brightness, per-band auto-gain (floor/peak trackers) | off |
 | color | shape colours and page background | on |
-| metadata | title, artist, album, progress bar, artwork thumbnail; artwork also as a full-page backdrop (cover, `blur(48px) saturate(1.3)`, opacity 0.35 over the palette background, 1.2 s cross-fade) | on |
+| metadata | title, artist, album, progress bar, artwork thumbnail; artwork also as a full-page backdrop (cover, `blur(48px) saturate(1.3)`, opacity 0.35 over the palette background; each new artwork is decoded, then faded in over the old one in 1.2 s; a missing artwork clears it only after 3 s, so a gap between tracks does not flash) | on |
 | stream start/end | animation on/off; stop re-forms the logo | |
 
 ## Colour role and contrast

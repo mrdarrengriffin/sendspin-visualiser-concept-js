@@ -256,28 +256,39 @@ const paletteToState = (p: Palette): ColorState => Object.fromEntries(PALETTE_KE
 const hexToArr = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 
 // ------------------------------------------------------------------ backdrop
-// Blurred artwork behind the page. Each new artwork is preloaded, then faded in over the old one,
-// which fades out and is removed; a failed load just clears it.
-let backdropUrl: string | null = null;
-function setBackdrop(url: string | null): void {
-  if (!el.backdrop.checked) url = null;
+// Blurred artwork behind the page. A new artwork is loaded and decoded off-screen, then faded in on
+// top of the old one, which stays fully visible underneath until the fade ends, so the page never
+// dips to the bare background mid-change. Metadata often drops the artwork for a moment between
+// tracks, so an absent artwork only clears the backdrop after a grace period; a new one arriving
+// in the meantime cross-fades straight over the old.
+const BACKDROP_FADE_MS = 1200, BACKDROP_CLEAR_MS = 3000;
+let backdropUrl: string | null = null, backdropClear = 0;
+function setBackdrop(url: string | null, now = false): void {
+  if (!el.backdrop.checked) { url = null; now = true; }
+  clearTimeout(backdropClear);
   if (url === backdropUrl) return;
+  if (!url && !now) { backdropClear = window.setTimeout(() => setBackdrop(null, true), BACKDROP_CLEAR_MS); return; }
   backdropUrl = url;
-  const old = [...el.backdropBox.children];
-  const dropOld = () => old.forEach((o) => { o.classList.remove('shown'); setTimeout(() => o.remove(), 1500); });
-  if (!url) { dropOld(); return; }
+  const box = el.backdropBox;
+  if (!url) {
+    for (const o of box.children) o.classList.remove('shown');
+    const gone = [...box.children];
+    setTimeout(() => gone.forEach((o) => o.remove()), BACKDROP_FADE_MS + 100);
+    return;
+  }
   const img = new Image();
-  img.alt = ''; img.decoding = 'async';
-  img.onload = () => {
-    if (backdropUrl !== url) return;
-    el.backdropBox.append(img);
-    void img.offsetWidth; // commit opacity 0 so the fade runs
-    img.classList.add('shown'); dropOld();
-  };
-  img.onerror = () => { if (backdropUrl === url) dropOld(); };
+  img.alt = '';
   img.src = url;
+  img.decode().then(() => {
+    if (backdropUrl !== url) return;
+    const below = [...box.children];
+    box.append(img);
+    void img.offsetWidth; // commit opacity 0 so the fade runs
+    img.classList.add('shown');
+    setTimeout(() => below.forEach((o) => o.remove()), BACKDROP_FADE_MS + 100);
+  }, () => { if (backdropUrl === url) setBackdrop(null, true); });
 }
-el.backdrop.addEventListener('change', () => setBackdrop(lastState?.serverState?.metadata?.artwork_url ?? null));
+el.backdrop.addEventListener('change', () => setBackdrop(lastState?.serverState?.metadata?.artwork_url ?? null, true));
 
 // ------------------------------------------------------------------ server state
 function onState(state: PlayerState): void {
@@ -439,7 +450,7 @@ function disconnect(): void {
   const r = remote; remote = null; r?.close();
   player = null; streaming = false;
   el.connect.textContent = 'Connect'; el.status.textContent = 'disconnected';
-  logo.setAnimating(false); clock.reset('disconnect'); setBackdrop(null);
+  logo.setAnimating(false); clock.reset('disconnect'); setBackdrop(null, true);
 }
 el.connect.addEventListener('click', () => (player ? disconnect() : connect()));
 

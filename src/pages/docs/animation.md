@@ -41,6 +41,9 @@ Blocks that can be prepended:
   flight simply exit ahead of it. Result: the logo re-forms exactly, never snaps.
 - Speed (units/s) is low-pass filtered (`v += (target − v) · min(1, 4·dt)`) so nudging a slider
   never jolts.
+- Leaving the beat lock (`clearBeatClock()`, e.g. on a track change) never jolts either: each path
+  keeps the speed it had under the lock and the difference to the free flow decays,
+  `dv ← dv · exp(−dt / 0.5)`, speed `= max(0, v + dv)`.
 - Frame rate is capped (default 60 fps) regardless of display refresh.
 
 ## Colour

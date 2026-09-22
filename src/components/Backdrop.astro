@@ -1,19 +1,20 @@
 ---
 /**
  * Full-page backdrop: the current album artwork, blurred and dimmed behind everything. The player
- * script appends one <img> per artwork and cross-fades them; the page background (--bg, from the
- * colour role) shows through, so the palette's contrast against --bg still roughly holds.
+ * script stacks one <img> per artwork and fades each new one in over the last; the page background
+ * (--bg, from the colour role) shows through, so the palette's contrast against --bg roughly holds.
  */
 ---
 <div class="backdrop" data-backdrop aria-hidden="true"></div>
 
 <style>
-  .backdrop { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+  /* The dimming lives on the box, so a new image fading in to full opacity fully covers the old. */
+  .backdrop { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; opacity: 0.35; }
   /* scale() hides the blur's soft, see-through edges. */
   .backdrop :global(img) {
     position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
     filter: blur(48px) saturate(1.3); transform: scale(1.2);
     opacity: 0; transition: opacity 1.2s ease;
   }
-  .backdrop :global(img.shown) { opacity: 0.35; }
+  .backdrop :global(img.shown) { opacity: 1; }
 </style>
