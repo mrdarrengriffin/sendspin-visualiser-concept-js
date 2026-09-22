@@ -6,8 +6,8 @@ import { mountLogo, type Logo } from '@lib/logo';
 import { BeatClock, type TempoLogEntry } from '@lib/beat/tempo';
 import { contrast, PALETTE_KEYS, rgbArrayToHex, shapeColoursFor, type Palette } from '@lib/color';
 import {
-  loadSendspin, normaliseBaseUrl, VISUALIZER_REQUEST,
-  type ColorState, type PlayerState, type SendspinPlayer, type SendspinPlayerConfig, type VisualizerFrame, type VisualizerStreamConfig,
+  ARTWORK_REQUEST, loadSendspin, normaliseBaseUrl, VISUALIZER_REQUEST,
+  type ArtworkImage, type ColorState, type PlayerState, type SendspinPlayer, type SendspinPlayerConfig, type VisualizerFrame, type VisualizerStreamConfig,
 } from '@lib/sendspin/client';
 import { isLanHostname, normaliseRemoteId, openRemoteSendspinSocket, type RemoteSendspinSocket } from '@lib/sendspin/ma-webrtc';
 
@@ -243,7 +243,7 @@ function applyPalette(c: ColorState): void {
   document.documentElement.style.setProperty('--bg', chosen.background); logo.setBackground(chosen.background);
   document.documentElement.style.setProperty('--fg', chosen.foreground);
   el.themeColor?.setAttribute('content', chosen.background); // mobile browser chrome follows the artwork
-  const art = lastState?.serverState?.metadata?.artwork_url;
+  const art = currentArt();
   el.palette.innerHTML = (art ? `<img src="${art}" alt="">` : '') + PALETTE_KEYS.map((key) => {
     const col = p[key];
     const ratio = col ? contrast(col, chosen.background).toFixed(1) : '';
@@ -288,7 +288,39 @@ function setBackdrop(url: string | null, now = false): void {
     setTimeout(() => below.forEach((o) => o.remove()), BACKDROP_FADE_MS + 100);
   }, () => { if (backdropUrl === url) setBackdrop(null, true); });
 }
-el.backdrop.addEventListener('change', () => setBackdrop(lastState?.serverState?.metadata?.artwork_url ?? null, true));
+el.backdrop.addEventListener('change', () => setBackdrop(currentArt(), true));
+
+// Where the artwork comes from. The artwork role delivers the image itself over the Sendspin
+// connection, which works on an https page and over the remote route; metadata's artwork_url
+// usually points at Music Assistant's LAN image proxy, which neither can fetch. So the role wins
+// once its stream has started, and artwork_url is only the fallback for servers without it.
+// roleArt: undefined = no artwork stream, null = stream running but the channel is clear.
+let roleArt: string | null | undefined = undefined;
+let pendingArt = 0, pendingUrl: string | null = null;
+const currentArt = (): string | null =>
+  roleArt !== undefined ? roleArt : lastState?.serverState?.metadata?.artwork_url ?? null;
+function showRoleArt(url: string | null): void {
+  const prev = roleArt;
+  roleArt = url;
+  setBackdrop(url);
+  if (prev?.startsWith('blob:')) setTimeout(() => URL.revokeObjectURL(prev), BACKDROP_FADE_MS + 500);
+}
+// A complete image becomes current at its timestamp (never dropped for lateness); a newer
+// announce or a cancel discards the pending one.
+function onArtwork(a: ArtworkImage): void {
+  if (a.channel !== 0) return;
+  dropPendingArt();
+  const url = a.image ? URL.createObjectURL(a.image) : null;
+  pendingUrl = url;
+  const waitMs = player ? Math.max(0, (a.timestampUs - player.getCurrentServerTimeUs()) / 1000) : 0;
+  blog('artwork', { bytes: a.image?.size ?? 0, inMs: Math.round(waitMs) });
+  pendingArt = window.setTimeout(() => { pendingUrl = null; showRoleArt(url); }, waitMs);
+}
+function dropPendingArt(): void {
+  clearTimeout(pendingArt);
+  if (pendingUrl) URL.revokeObjectURL(pendingUrl);
+  pendingUrl = null;
+}
 
 // ------------------------------------------------------------------ server state
 function onState(state: PlayerState): void {
@@ -304,7 +336,7 @@ function onState(state: PlayerState): void {
   }
   el.title.textContent = m?.title || (player ? 'Nothing playing' : ' ');
   el.artist.textContent = [m?.artist, m?.album].filter(Boolean).join(' · ') || ' ';
-  setBackdrop(m?.artwork_url ?? null);
+  if (roleArt === undefined) setBackdrop(m?.artwork_url ?? null);
 
   const c = state.serverState?.color;
   if (c && c.timestamp !== lastColorTs) {
@@ -415,6 +447,14 @@ async function connect(): Promise<void> {
       else logo.setAnimating(true);
     },
     onVisualizerClear: () => { queue = []; clock.reset('stream clear'); },
+    artwork: ARTWORK_REQUEST,
+    onArtwork,
+    onArtworkCancel: (ch) => { if (ch === 0) dropPendingArt(); },
+    onArtworkStream: (cfg) => {
+      blog('artwork stream', { channels: cfg?.channels ?? null });
+      if (cfg && roleArt === undefined) roleArt = null;
+      if (!cfg) { dropPendingArt(); showRoleArt(null); roleArt = undefined; setBackdrop(currentArt()); }
+    },
     onStateChange: onState,
     onPairingPin: (pin) => { el.status.textContent = `pairing PIN: ${pin}`; },
     reconnect: { onReconnecting: (n) => { el.status.textContent = `reconnecting (${n})`; }, onReconnected: () => { el.status.textContent = 'connected'; } },
@@ -450,7 +490,8 @@ function disconnect(): void {
   const r = remote; remote = null; r?.close();
   player = null; streaming = false;
   el.connect.textContent = 'Connect'; el.status.textContent = 'disconnected';
-  logo.setAnimating(false); clock.reset('disconnect'); setBackdrop(null, true);
+  logo.setAnimating(false); clock.reset('disconnect');
+  dropPendingArt(); showRoleArt(null); roleArt = undefined; setBackdrop(null, true);
 }
 el.connect.addEventListener('click', () => (player ? disconnect() : connect()));
 

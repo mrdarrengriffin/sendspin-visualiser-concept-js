@@ -26,6 +26,26 @@ export type VisualizerFrame =
   | { type: 'spectrum'; timestampUs: number; bins: Uint16Array }
   | { type: 'peak'; timestampUs: number; strength: number };
 
+/** One artwork channel; the server scales to fit and pads with black, never crops. */
+export interface ArtworkChannel {
+  source: 'album' | 'artist' | 'none';
+  format?: 'jpeg' | 'png';
+  width?: number;
+  height?: number;
+}
+
+/** Artwork role configuration: 1-4 channels, index = channel number. */
+export interface ArtworkRequest {
+  channels: ArtworkChannel[];
+}
+
+/** One complete artwork transfer. `image` null clears the channel; `timestampUs` is when to show it. */
+export interface ArtworkImage {
+  channel: number;
+  timestampUs: number;
+  image: Blob | null;
+}
+
 export interface ColorState {
   timestamp?: number;
   background_dark?: number[] | null;
@@ -69,6 +89,12 @@ export interface SendspinPlayerConfig {
   onVisualizerFrame?: (frame: VisualizerFrame) => void;
   onVisualizerStream?: (config: VisualizerStreamConfig | null) => void;
   onVisualizerClear?: () => void;
+  /** Artwork role: images arrive over the Sendspin connection, so no HTTP fetch is needed. */
+  artwork?: ArtworkRequest;
+  onArtwork?: (image: ArtworkImage) => void;
+  /** The server discarded the channel's pending (scheduled, not yet shown) image. */
+  onArtworkCancel?: (channel: number) => void;
+  onArtworkStream?: (config: ArtworkRequest | null) => void;
   onStateChange?: (state: PlayerState) => void;
   onPairingPin?: (pin: string) => void;
   reconnect?: { onReconnecting?: (attempt: number) => void; onReconnected?: () => void };
@@ -83,6 +109,7 @@ export interface SendspinPlayer {
   /** Current server-clock time in microseconds, via the library's time filter. */
   getCurrentServerTimeUs(): number;
   setVisualizerRequest(req: VisualizerRequest | null): void;
+  setArtworkRequest(req: ArtworkRequest | null): void;
 }
 
 interface SendspinModule {
@@ -105,6 +132,11 @@ export function normaliseBaseUrl(input: string): string {
   if (!/:\d+(\/|$)/.test(url.replace(/^https?:\/\//, ''))) url = url.replace(/\/$/, '') + ':8927';
   return url;
 }
+
+/** The artwork this app asks for: album art on channel 0, square, enough for a blurred backdrop. */
+export const ARTWORK_REQUEST: ArtworkRequest = {
+  channels: [{ source: 'album', format: 'jpeg', width: 512, height: 512 }],
+};
 
 /** The visualizer data this app asks the server for. */
 export const VISUALIZER_REQUEST: VisualizerRequest = {

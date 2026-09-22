@@ -1,18 +1,28 @@
 diff --git a/src/core/core.ts b/src/core/core.ts
-index 91c58f0..8bbc4ce 100644
+index 91c58f0..9e04056 100644
 --- a/src/core/core.ts
 +++ b/src/core/core.ts
-@@ -34,6 +34,9 @@ import type {
+@@ -34,6 +34,11 @@ import type {
    ControllerCommands,
    ServerStatePayload,
    GroupUpdatePayload,
 +  VisualizerFrame,
 +  VisualizerRequest,
++  ArtworkImage,
++  ArtworkRequest,
 +  VisualizerStreamConfig,
  } from "../types";
  import type { StreamHandler } from "../internal-types";
  
-@@ -238,7 +241,80 @@ export class SendspinCore implements StreamHandler {
+@@ -229,6 +234,7 @@ export class SendspinCore implements StreamHandler {
+     // Stop periodic state-update sends so they don't spam
+     // "WebSocket not connected" warnings after the transport is gone.
+     this.stateManager.clearStateUpdateInterval();
++    this.artworkTransfer = null;
+     console.log("Sendspin: Connection closed");
+     this._onConnectionClose?.();
+   }
+@@ -238,7 +244,179 @@ export class SendspinCore implements StreamHandler {
    // (called by ProtocolHandler)
    // ========================================
  
@@ -24,6 +34,101 @@ index 91c58f0..8bbc4ce 100644
 +
 +  setVisualizerRequest(request: VisualizerRequest | null): void {
 +    this.protocolHandler.setVisualizerRequest(request);
++  }
++
++  /** Artwork role callbacks (set by SendspinPlayer). */
++  onArtwork: ((image: ArtworkImage) => void) | null = null;
++  onArtworkCancel: ((channel: number) => void) | null = null;
++  onArtworkStream: ((config: ArtworkRequest | null) => void) | null = null;
++  private artworkConfig: ArtworkRequest | null = null;
++  // At most one transfer is in flight across all channels (spec: artwork binary).
++  private artworkTransfer: {
++    channel: number;
++    timestampUs: number;
++    total: number;
++    received: number;
++    parts: Uint8Array[];
++  } | null = null;
++
++  setArtworkRequest(request: ArtworkRequest | null): void {
++    this.protocolHandler.setArtworkRequest(request);
++  }
++
++  handleArtworkStreamStart(config: ArtworkRequest): void {
++    console.log("Sendspin: Artwork stream started", config);
++    this.artworkConfig = config;
++    this.onArtworkStream?.(config);
++  }
++  handleArtworkStreamEnd(): void {
++    console.log("Sendspin: Artwork stream ended");
++    this.artworkConfig = null;
++    this.artworkTransfer = null;
++    this.onArtworkStream?.(null);
++  }
++
++  // Binary artwork message, types 8-11 = channels 0-3, byte 1 = flags:
++  //   announce (bit 1): [type][flags][timestamp:8 BE int64][total_size:4 BE uint32]
++  //   part (no bits):   [type][flags][data...]
++  //   cancel (bit 0):   [type][flags]
++  // The parts' data concatenated is the encoded image, complete at total_size bytes.
++  // Servers on aiosendspin <= 9.1.x (Music Assistant) send the older single-message form instead,
++  //   [type][timestamp:8 BE int64][image...] (header only = clear),
++  // whose byte 1 is the timestamp's top byte, always 0. A flags byte of 0 is a part, which is only
++  // valid while a transfer is in flight, so a 0 with none in flight is read as the older form.
++  // Malformed input is logged and dropped rather than closing the connection.
++  handleArtworkBinary(type: number, data: ArrayBuffer): void {
++    const channel = type - 8;
++    const bytes = new Uint8Array(data);
++    if (bytes.length < 2) return;
++    const flags = bytes[1];
++    if (flags === 0 && !this.artworkTransfer && bytes.length >= 9) {
++      const timestampUs = Number(new DataView(data).getBigInt64(1));
++      const total = bytes.length - 9;
++      this.artworkTransfer = { channel, timestampUs, total, received: total, parts: total ? [bytes.slice(9)] : [] };
++      this.finishArtworkTransfer();
++      return;
++    }
++    if (flags & 0xfc || (flags & 3) === 3) {
++      console.warn("Sendspin: Malformed artwork message, flags", flags);
++      return;
++    }
++    if (flags & 1) {
++      if (this.artworkTransfer?.channel === channel) this.artworkTransfer = null;
++      this.onArtworkCancel?.(channel);
++      return;
++    }
++    if (flags & 2) {
++      if (bytes.length !== 14) {
++        console.warn("Sendspin: Malformed artwork announce, length", bytes.length);
++        return;
++      }
++      const view = new DataView(data);
++      const timestampUs = Number(view.getBigInt64(2));
++      const total = view.getUint32(10);
++      this.artworkTransfer = { channel, timestampUs, total, received: 0, parts: [] };
++      if (total === 0) this.finishArtworkTransfer();
++      return;
++    }
++    const t = this.artworkTransfer;
++    if (!t || t.channel !== channel || t.received + bytes.length - 2 > t.total) {
++      console.warn("Sendspin: Unexpected artwork part on channel", channel);
++      this.artworkTransfer = null;
++      return;
++    }
++    t.parts.push(bytes.slice(2));
++    t.received += bytes.length - 2;
++    if (t.received === t.total) this.finishArtworkTransfer();
++  }
++
++  private finishArtworkTransfer(): void {
++    const t = this.artworkTransfer!;
++    this.artworkTransfer = null;
++    const format = this.artworkConfig?.channels[t.channel]?.format ?? "jpeg";
++    const image =
++      t.total === 0
++        ? null
++        : new Blob(t.parts as BlobPart[], { type: `image/${format}` });
++    this.onArtwork?.({ channel: t.channel, timestampUs: t.timestampUs, image });
 +  }
 +
 +  handleVisualizerStreamStart(config: VisualizerStreamConfig): void {
@@ -90,39 +195,47 @@ index 91c58f0..8bbc4ce 100644
 +      this.handleVisualizerBinary(messageType, data);
 +      return;
 +    }
++    if (messageType >= 8 && messageType <= 11) {
++      this.handleArtworkBinary(messageType, data);
++      return;
++    }
      const format = this.stateManager.currentStreamFormat;
      if (!format) {
        console.warn("Sendspin: Received audio chunk but no stream format set");
 diff --git a/src/core/protocol-handler.ts b/src/core/protocol-handler.ts
-index fd1baa0..dff517c 100644
+index fd1baa0..b9111da 100644
 --- a/src/core/protocol-handler.ts
 +++ b/src/core/protocol-handler.ts
 @@ -25,6 +25,10 @@ import type { StateManager } from "./state-manager";
  import { TimeSyncManager } from "./time-sync-manager";
  import { getDefaultBufferCapacity, getSupportedFormats } from "./codec-support";
  import { clampSyncDelayMs } from "../sync-delay";
-+import type { VisualizerRequest } from "../types";
++import type { ArtworkRequest, VisualizerRequest } from "../types";
 +
 +// Max bytes of not-yet-due visualizer frames the server may have in flight to us.
 +const VISUALIZER_BUFFER_CAPACITY = 256 * 1024;
  
  // Constants
  const STATE_UPDATE_INTERVAL = 5000; // 5 seconds
-@@ -95,6 +99,8 @@ export class ProtocolHandler {
+@@ -95,6 +99,9 @@ export class ProtocolHandler {
    // full again.
    private lastSentPlayer: SentPlayerState | null = null;
  
 +  private visualizerRequest: VisualizerRequest | null = null;
++  private artworkRequest: ArtworkRequest | null = null;
 +
    constructor(
      private sender: MessageSender,
      private helloContext: HelloContext,
-@@ -238,9 +244,14 @@ export class ProtocolHandler {
+@@ -238,9 +245,17 @@ export class ProtocolHandler {
    }
  
    private handleStreamStart(message: StreamStart): void {
 +    if (message.payload.visualizer) {
 +      this.streamHandler.handleVisualizerStreamStart(message.payload.visualizer);
++    }
++    if (message.payload.artwork) {
++      this.streamHandler.handleArtworkStreamStart(message.payload.artwork);
 +    }
 +    const player = message.payload.player;
 +    if (!player) return;
@@ -133,7 +246,7 @@ index fd1baa0..dff517c 100644
      console.log(
        isFormatUpdate
          ? "Sendspin: Stream format updated"
-@@ -269,6 +280,9 @@ export class ProtocolHandler {
+@@ -269,6 +284,9 @@ export class ProtocolHandler {
  
    private handleStreamClear(message: StreamClear): void {
      const roles = message.payload.roles;
@@ -143,17 +256,20 @@ index fd1baa0..dff517c 100644
      if (!roles || roles.includes("player")) {
        console.log("Sendspin: Stream clear (seek)");
        this.streamHandler.handleStreamClear();
-@@ -277,6 +291,9 @@ export class ProtocolHandler {
+@@ -277,6 +295,12 @@ export class ProtocolHandler {
  
    private handleStreamEnd(message: StreamEnd): void {
      const roles = message.payload?.roles;
 +    if (!roles || roles.includes("visualizer")) {
 +      this.streamHandler.handleVisualizerStreamEnd();
 +    }
++    if (!roles || roles.includes("artwork")) {
++      this.streamHandler.handleArtworkStreamEnd();
++    }
      if (!roles || roles.includes("player")) {
        console.log("Sendspin: Stream ended");
        this.streamHandler.handleStreamEnd();
-@@ -346,7 +363,13 @@ export class ProtocolHandler {
+@@ -346,7 +370,14 @@ export class ProtocolHandler {
        type: "client/hello" as MessageType.CLIENT_HELLO,
        payload: {
          name: this.clientName,
@@ -163,12 +279,13 @@ index fd1baa0..dff517c 100644
 +          "controller@v1",
 +          "metadata@v1",
 +          ...(this.visualizerRequest ? ["visualizer@v1"] : []),
++          ...(this.artworkRequest ? ["artwork@v1"] : []),
 +          "color@v1",
 +        ],
          trust_level: this.helloContext.trustLevel(),
          supported_pair_methods: this.helloContext.pairMethods(),
          unpaired_access: { enabled: this.helloContext.unpairedAccess },
-@@ -364,6 +387,16 @@ export class ProtocolHandler {
+@@ -364,6 +395,30 @@ export class ProtocolHandler {
              this.bufferCapacity ?? getDefaultBufferCapacity(supportedFormats),
            supported_commands: ["volume", "mute"],
          },
@@ -182,10 +299,24 @@ index fd1baa0..dff517c 100644
 +              },
 +            }
 +          : {}),
++        ...(this.artworkRequest
++          ? {
++              // Not in the current spec (the channels moved to client/state), but servers on
++              // aiosendspin <= 9.1.x require it whenever artwork@v1 is listed, under these names.
++              "artwork@v1_support": {
++                channels: this.artworkRequest.channels.map((c) => ({
++                  source: c.source,
++                  format: c.format ?? "jpeg",
++                  media_width: c.width ?? 1,
++                  media_height: c.height ?? 1,
++                })),
++              },
++            }
++          : {}),
        },
      };
      // Reset so the first client/state after connect is a full snapshot.
-@@ -435,6 +468,13 @@ export class ProtocolHandler {
+@@ -435,6 +490,20 @@ export class ProtocolHandler {
        this.lastSentPlayer = current;
      }
  
@@ -196,13 +327,26 @@ index fd1baa0..dff517c 100644
 +      payload.visualizer = this.visualizerRequest;
 +    }
 +
++    if (
++      this.artworkRequest &&
++      (this.activeRoles === null || this.activeRoles.has("artwork@v1"))
++    ) {
++      payload.artwork = this.artworkRequest;
++    }
++
      const message: ClientState = {
        type: "client/state" as MessageType.CLIENT_STATE,
        payload,
-@@ -442,6 +482,12 @@ export class ProtocolHandler {
+@@ -442,6 +511,18 @@ export class ProtocolHandler {
      this.sender.sendControl(message);
    }
  
++  /** Set (or clear with null) the artwork request: advertised in client/hello, re-sent on the next client/state. */
++  setArtworkRequest(request: ArtworkRequest | null): void {
++    this.artworkRequest = request;
++    if (this.activated) this.sendStateUpdate();
++  }
++
 +  /** Set (or clear with null) the visualizer request; re-sent on the next client/state. */
 +  setVisualizerRequest(request: VisualizerRequest | null): void {
 +    this.visualizerRequest = request;
@@ -213,18 +357,19 @@ index fd1baa0..dff517c 100644
    sendGoodbye(reason: GoodbyeReason): void {
      this.sender.sendControl({
 diff --git a/src/index.ts b/src/index.ts
-index 92644d2..a1f1cb1 100644
+index 92644d2..3dea013 100644
 --- a/src/index.ts
 +++ b/src/index.ts
-@@ -10,6 +10,7 @@ import type {
+@@ -10,6 +10,8 @@ import type {
    ControllerCommand,
    ControllerCommands,
    CorrectionMode,
 +  VisualizerRequest,
++  ArtworkRequest,
  } from "./types";
  
  // Platform detection utilities
-@@ -129,6 +130,12 @@ export class SendspinPlayer {
+@@ -129,6 +131,18 @@ export class SendspinPlayer {
        this.scheduler.handleDecodedChunk(chunk);
      };
  
@@ -234,10 +379,16 @@ index 92644d2..a1f1cb1 100644
 +    this.core.onVisualizerClear = config.onVisualizerClear ?? null;
 +    if (config.visualizer) this.core.setVisualizerRequest(config.visualizer);
 +
++    // Artwork role
++    this.core.onArtwork = config.onArtwork ?? null;
++    this.core.onArtworkCancel = config.onArtworkCancel ?? null;
++    this.core.onArtworkStream = config.onArtworkStream ?? null;
++    if (config.artwork) this.core.setArtworkRequest(config.artwork);
++
      this.core.onStreamStart = (format, isFormatUpdate) => {
        this.scheduler.initAudioContext();
        void this.scheduler.resumeAudioContext().catch((error) => {
-@@ -372,6 +379,11 @@ export class SendspinPlayer {
+@@ -372,6 +386,16 @@ export class SendspinPlayer {
    }
  
    /** Get current server time in microseconds using synchronized clock */
@@ -246,41 +397,49 @@ index 92644d2..a1f1cb1 100644
 +    this.core.setVisualizerRequest(request);
 +  }
 +
++  /** Change the artwork request; takes effect on the next client/state. */
++  setArtworkRequest(request: ArtworkRequest | null): void {
++    this.core.setArtworkRequest(request);
++  }
++
    getCurrentServerTimeUs(): number {
      return this.core.getCurrentServerTimeUs();
    }
 diff --git a/src/internal-types.ts b/src/internal-types.ts
-index 8a83a6e..643bb71 100644
+index 8a83a6e..2393b21 100644
 --- a/src/internal-types.ts
 +++ b/src/internal-types.ts
 @@ -1,3 +1,4 @@
-+import type { VisualizerStreamConfig } from "./types";
++import type { ArtworkRequest, VisualizerStreamConfig } from "./types";
  /**
   * Internal plumbing types shared across SDK modules but not part of the
   * public API surface. These are intentionally NOT re-exported from index.ts.
-@@ -20,6 +21,9 @@ export interface StreamHandler {
+@@ -20,6 +21,11 @@ export interface StreamHandler {
    handleStreamStart(format: StreamFormat, isFormatUpdate: boolean): void;
    handleStreamClear(): void;
    handleStreamEnd(): void;
 +  handleVisualizerStreamStart(config: VisualizerStreamConfig): void;
 +  handleVisualizerStreamClear(): void;
 +  handleVisualizerStreamEnd(): void;
++  handleArtworkStreamStart(config: ArtworkRequest): void;
++  handleArtworkStreamEnd(): void;
    handleVolumeUpdate(): void;
    handleSyncDelayChange(delayMs: number): void;
    getSyncDelayMs(): number;
 diff --git a/src/types.ts b/src/types.ts
-index 91d9288..8fd10b5 100644
+index 91d9288..b9b225e 100644
 --- a/src/types.ts
 +++ b/src/types.ts
-@@ -121,6 +121,7 @@ export interface ClientState {
+@@ -121,6 +121,8 @@ export interface ClientState {
        min_buffer_ms?: number;
        supported_commands?: string[];
      };
 +    visualizer?: VisualizerRequest;
++    artwork?: ArtworkRequest;
    };
  }
  
-@@ -173,6 +174,45 @@ export interface ServerStateMetadata {
+@@ -173,6 +175,68 @@ export interface ServerStateMetadata {
    shuffle?: boolean | null;
  }
  
@@ -301,6 +460,29 @@ index 91d9288..8fd10b5 100644
 +  scale: "mel" | "log" | "lin";
 +  f_min: number;
 +  f_max: number;
++}
++
++/** One artwork channel (client/state and stream/start artwork objects). */
++export interface ArtworkChannel {
++  source: "album" | "artist" | "none";
++  format?: "jpeg" | "png";
++  width?: number;
++  height?: number;
++}
++
++/** Artwork role configuration: 1-4 channels, index = channel number. */
++export interface ArtworkRequest {
++  channels: ArtworkChannel[];
++}
++
++/**
++ * One complete artwork transfer. image is null for a clear (empty image).
++ * timestampUs is server-clock microseconds: when the image should be shown.
++ */
++export interface ArtworkImage {
++  channel: number;
++  timestampUs: number;
++  image: Blob | null;
 +}
 +
 +/** What the client asks the server to stream (client/state visualizer object). */
@@ -326,7 +508,7 @@ index 91d9288..8fd10b5 100644
  export interface ServerStateController {
    supported_commands?: string[];
    volume?: number;
-@@ -187,6 +227,7 @@ export interface ServerStatePayload {
+@@ -187,6 +251,7 @@ export interface ServerStatePayload {
    metadata?: ServerStateMetadata;
    controller?: ServerStateController;
    player?: ServerStatePlayer;
@@ -334,7 +516,7 @@ index 91d9288..8fd10b5 100644
  }
  
  export interface ServerState {
-@@ -197,13 +238,14 @@ export interface ServerState {
+@@ -197,13 +262,15 @@ export interface ServerState {
  export interface StreamStart {
    type: MessageType.STREAM_START;
    payload: {
@@ -347,10 +529,11 @@ index 91d9288..8fd10b5 100644
        codec_header?: string;
      };
 +    visualizer?: VisualizerStreamConfig;
++    artwork?: ArtworkRequest;
    };
  }
  
-@@ -439,6 +481,17 @@ export interface SupportedFormat {
+@@ -439,6 +506,28 @@ export interface SupportedFormat {
  }
  
  export interface SendspinPlayerConfig extends SendspinCoreConfig {
@@ -365,6 +548,17 @@ index 91d9288..8fd10b5 100644
 +  onVisualizerStream?: (config: VisualizerStreamConfig | null) => void;
 +  /** Called when the server clears the visualizer stream (seek / track jump). */
 +  onVisualizerClear?: () => void;
++  /**
++   * Artwork role: which images to request. When set, the client advertises artwork@v1
++   * and completed images arrive via onArtwork.
++   */
++  artwork?: ArtworkRequest;
++  /** Called for every completed artwork transfer (image null = clear the channel). */
++  onArtwork?: (image: ArtworkImage) => void;
++  /** Called when the server cancels a channel's pending (not yet shown) image. */
++  onArtworkCancel?: (channel: number) => void;
++  /** Called when the server starts/updates (config) or ends (null) the artwork stream. */
++  onArtworkStream?: (config: ArtworkRequest | null) => void;
    /**
     * HTMLAudioElement for media-element output mode.
     * Auto-created on mobile browsers if not provided.

@@ -83,12 +83,13 @@ use to a hosted page; the Remote ID route is.)
 |---|---|
 | `player@v1` | the browser outputs the audio (Opus via WebCodecs); optional for a display-only device |
 | `controller@v1` | transport buttons, volume |
-| `metadata@v1` | title / artist / album / progress; `artwork_url` |
+| `metadata@v1` | title / artist / album / progress; `artwork_url` (fallback only, see below) |
+| `artwork@v1` | album artwork as image bytes over the connection (channel 0, 512×512 JPEG) |
 | `visualizer@v1` | loudness, beat, peak, spectrum frames |
 | `color@v1` | six-colour palette derived from the artwork |
 
-A display-only device (no audio output) should declare only `visualizer@v1`, `color@v1` and
-`metadata@v1`. Music Assistant creates a "visualizer" player type for such clients and groups it
+A display-only device (no audio output) should declare only `visualizer@v1`, `color@v1`,
+`artwork@v1` and `metadata@v1`. Music Assistant creates a "visualizer" player type for such clients and groups it
 with a real player.
 
 ## The client library patch
@@ -105,11 +106,34 @@ player/controller/metadata. `tools/sendspin-js-visualizer-role.patch` (against c
 - `server/state.color` stored and delivered through `onStateChange`.
 - `SendspinPlayer` options `visualizer`, `onVisualizerFrame`, `onVisualizerStream`,
   `onVisualizerClear`; method `setVisualizerRequest()`.
+- `artwork@v1` in `supported_roles` when an `artwork` request `{ channels: [...] }` is given;
+  `client/state.artwork` = that request; `stream/start` / `stream/end` with the `artwork` role;
+  binary ids 8–11 reassembled into a `Blob` and delivered to `onArtwork({ channel, timestampUs,
+  image })` (`image` null = clear); options `artwork`, `onArtwork`, `onArtworkCancel`,
+  `onArtworkStream`; method `setArtworkRequest()`.
 
 **Compatibility quirk:** Music Assistant pins aiosendspin 9.1.1, whose `client/hello` parser still
 requires `rate_max` and `types` (and optional `spectrum`) *inside* `visualizer@v1_support`; the
 current spec moved them to `client/state`. The patch sends both. Unknown keys in `client/state`
 are ignored by 9.1.1.
+
+The same holds for artwork. 9.1.1 requires `artwork@v1_support: { channels: [{ source, format,
+media_width, media_height }] }` in the hello whenever `artwork@v1` is listed (the hello is
+rejected without it), and sends each image as one message, `[type][timestamp:8][image bytes]`
+(header only = clear). The current spec sends the channels in `client/state` and splits an image
+into an announce `[type][flags=2][timestamp:8][total_size:4]`, parts `[type][flags=0][data]` and a
+cancel `[type][flags=1]`. The patch sends both hello forms and reads both wire forms: the old
+form's byte 1 is the timestamp's top byte, always 0, and a flags byte of 0 is only a valid part
+while a transfer is in flight, so a 0 with none in flight is read as the old single message.
+
+## Artwork source
+
+`artwork_url` in metadata usually points at Music Assistant's image proxy on the LAN
+(`http://<host>:8095/imageproxy?...`). An `https://` page cannot load it (mixed content) and the
+remote route cannot reach it at all, so the player asks for the `artwork@v1` role and uses the
+image it delivers. `artwork_url` is used only when the server starts no artwork stream. A
+received image is shown at its timestamp (translated through the time filter, never dropped for
+lateness); a newer image or a cancel discards the pending one.
 
 Build: see `tools/README.md`. Output is an ESM bundle in `src/lib/sendspin/vendor/` (Opus fallback decoder
 as lazy chunks; Chrome uses WebCodecs and never loads them).

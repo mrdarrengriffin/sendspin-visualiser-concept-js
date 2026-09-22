@@ -1,4 +1,4 @@
-"""Local Sendspin test server: streams a synthetic groove with beats, colours and metadata.
+"""Local Sendspin test server: streams a synthetic groove with beats, colours, metadata and artwork.
 
 Lets the browser visualizer be exercised end to end without Music Assistant.
 Run:  venv/Scripts/python testserver.py [port] [options]
@@ -18,6 +18,8 @@ Scenarios for the beat clock (all off by default except the fill):
                             from N seconds each beat gap grows by this fraction for this many beats,
                             then the beats stop for good (an end-of-track ritardando and fade; the
                             audio keeps its tempo, only the schedule slows)
+  --art-every 20            swap the album artwork (and track title) every N seconds, to exercise
+                            the artwork role and the track-change cross-fade; 0 = one image only
 """
 from __future__ import annotations
 
@@ -28,6 +30,7 @@ import math
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 from aiohttp import web
 from aiosendspin.models.visualizer import BeatTiming
 from aiosendspin.noise.keys import Identity, b64url_decode
@@ -52,7 +55,7 @@ CHUNK_MS = 100
 # Scenario options, set from the command line in main().
 OPTS = argparse.Namespace(
     fill=True, bpm2=None, switch_at=40.0, shift_ms=0.0, shift_at=30.0, sparse=0.0,
-    half=None, gap=None, rit_at=None, rit_rate=0.03, rit_beats=12,
+    half=None, gap=None, rit_at=None, rit_rate=0.03, rit_beats=12, art_every=20.0,
 )
 STATE_DIR = Path(__file__).with_name("testserver-state")
 FMT = AudioFormat(sample_rate=SR, bit_depth=16, channels=CH, sample_type="int")
@@ -244,6 +247,10 @@ class TestServer:
                 primary=(226, 92, 76), accent=(76, 201, 240),
                 background_dark=(18, 14, 22), on_dark=(240, 236, 232),
             ))
+        art_role = group.group_role("artwork")
+        art_n = 0
+        if art_role:
+            await art_role.set_album_artwork(test_artwork(art_n))
         viz = group.group_role("visualizer")
         log.info("stream started for group %s (viz role: %s)", group.group_id, viz is not None)
         t = 0.0
@@ -271,12 +278,33 @@ class TestServer:
                 if predicted_us is not None and abs(play_start_us - predicted_us) > 2000:
                     log.warning("chunk timing jumped: predicted %d, actual %d", predicted_us, play_start_us)
                 t += CHUNK_MS / 1000
+                if OPTS.art_every > 0 and t >= (art_n + 1) * OPTS.art_every:
+                    art_n += 1
+                    log.info("artwork -> %d", art_n)
+                    if art_role:
+                        await art_role.set_album_artwork(test_artwork(art_n))
+                    if meta_role:
+                        meta_role.set_metadata(Metadata(
+                            title=f"Test Groove {art_n + 1}", artist="Sendspin test server", album="Local synth",
+                            track_progress=0, track_duration=0, playback_speed=1000, timestamp_us=ps.now_us(),
+                        ))
                 await ps.sleep_to_limit_buffer(1_500_000)
         except Exception:
             log.exception("stream loop failed")
         finally:
             log.info("stream ended for group %s", group.group_id)
             group.stop_stream()
+
+
+def test_artwork(n: int) -> Image.Image:
+    """A 512x512 stand-in cover: a diagonal two-colour gradient with a disc, hue rotated per n."""
+    hues = [(226, 92, 76), (76, 201, 240), (242, 183, 5), (140, 90, 220)]
+    a, b = np.array(hues[n % len(hues)], float), np.array(hues[(n + 1) % len(hues)], float)
+    y, x = np.mgrid[0:512, 0:512]
+    k = ((x + y) / 1022.0)[..., None]
+    img = a * (1 - k) + b * k
+    img[(x - 256) ** 2 + (y - 256) ** 2 < 110 ** 2] = 240
+    return Image.fromarray(img.astype(np.uint8), "RGB")
 
 
 async def main() -> None:
@@ -293,6 +321,7 @@ async def main() -> None:
     ap.add_argument("--rit-at", type=float, default=None)
     ap.add_argument("--rit-rate", type=float, default=0.03)
     ap.add_argument("--rit-beats", type=int, default=12)
+    ap.add_argument("--art-every", type=float, default=20.0)
     ap.parse_args(namespace=OPTS)
     log.info("scenario: %s", vars(OPTS))
     ts = TestServer(OPTS.port)

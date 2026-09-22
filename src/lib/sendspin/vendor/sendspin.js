@@ -758,6 +758,7 @@ class ProtocolHandler {
         // full again.
         this.lastSentPlayer = null;
         this.visualizerRequest = null;
+        this.artworkRequest = null;
         this.clientName = config.clientName ?? "Sendspin Player";
         this.productName = config.productName;
         this.codecs = config.codecs ?? ["opus", "flac", "pcm"];
@@ -871,6 +872,9 @@ class ProtocolHandler {
         if (message.payload.visualizer) {
             this.streamHandler.handleVisualizerStreamStart(message.payload.visualizer);
         }
+        if (message.payload.artwork) {
+            this.streamHandler.handleArtworkStreamStart(message.payload.artwork);
+        }
         const player = message.payload.player;
         if (!player)
             return;
@@ -904,6 +908,9 @@ class ProtocolHandler {
         const roles = message.payload?.roles;
         if (!roles || roles.includes("visualizer")) {
             this.streamHandler.handleVisualizerStreamEnd();
+        }
+        if (!roles || roles.includes("artwork")) {
+            this.streamHandler.handleArtworkStreamEnd();
         }
         if (!roles || roles.includes("player")) {
             console.log("Sendspin: Stream ended");
@@ -971,6 +978,7 @@ class ProtocolHandler {
                     "controller@v1",
                     "metadata@v1",
                     ...(this.visualizerRequest ? ["visualizer@v1"] : []),
+                    ...(this.artworkRequest ? ["artwork@v1"] : []),
                     "color@v1",
                 ],
                 trust_level: this.helloContext.trustLevel(),
@@ -994,6 +1002,20 @@ class ProtocolHandler {
                         "visualizer@v1_support": {
                             buffer_capacity: VISUALIZER_BUFFER_CAPACITY,
                             ...this.visualizerRequest,
+                        },
+                    }
+                    : {}),
+                ...(this.artworkRequest
+                    ? {
+                        // Not in the current spec (the channels moved to client/state), but servers on
+                        // aiosendspin <= 9.1.x require it whenever artwork@v1 is listed, under these names.
+                        "artwork@v1_support": {
+                            channels: this.artworkRequest.channels.map((c) => ({
+                                source: c.source,
+                                format: c.format ?? "jpeg",
+                                media_width: c.width ?? 1,
+                                media_height: c.height ?? 1,
+                            })),
                         },
                     }
                     : {}),
@@ -1069,11 +1091,21 @@ class ProtocolHandler {
             (this.activeRoles === null || this.activeRoles.has("visualizer@v1"))) {
             payload.visualizer = this.visualizerRequest;
         }
+        if (this.artworkRequest &&
+            (this.activeRoles === null || this.activeRoles.has("artwork@v1"))) {
+            payload.artwork = this.artworkRequest;
+        }
         const message = {
             type: "client/state",
             payload,
         };
         this.sender.sendControl(message);
+    }
+    /** Set (or clear with null) the artwork request: advertised in client/hello, re-sent on the next client/state. */
+    setArtworkRequest(request) {
+        this.artworkRequest = request;
+        if (this.activated)
+            this.sendStateUpdate();
     }
     /** Set (or clear with null) the visualizer request; re-sent on the next client/state. */
     setVisualizerRequest(request) {
@@ -6245,6 +6277,13 @@ class SendspinCore {
         this.onVisualizerFrame = null;
         this.onVisualizerStream = null;
         this.onVisualizerClear = null;
+        /** Artwork role callbacks (set by SendspinPlayer). */
+        this.onArtwork = null;
+        this.onArtworkCancel = null;
+        this.onArtworkStream = null;
+        this.artworkConfig = null;
+        // At most one transfer is in flight across all channels (spec: artwork binary).
+        this.artworkTransfer = null;
         // Validate configured codecs up front so a set with no browser overlap
         // throws to the app instead of failing silently inside client/hello dispatch.
         if (config.codecs)
@@ -6363,11 +6402,92 @@ class SendspinCore {
         // Stop periodic state-update sends so they don't spam
         // "WebSocket not connected" warnings after the transport is gone.
         this.stateManager.clearStateUpdateInterval();
+        this.artworkTransfer = null;
         console.log("Sendspin: Connection closed");
         this._onConnectionClose?.();
     }
     setVisualizerRequest(request) {
         this.protocolHandler.setVisualizerRequest(request);
+    }
+    setArtworkRequest(request) {
+        this.protocolHandler.setArtworkRequest(request);
+    }
+    handleArtworkStreamStart(config) {
+        console.log("Sendspin: Artwork stream started", config);
+        this.artworkConfig = config;
+        this.onArtworkStream?.(config);
+    }
+    handleArtworkStreamEnd() {
+        console.log("Sendspin: Artwork stream ended");
+        this.artworkConfig = null;
+        this.artworkTransfer = null;
+        this.onArtworkStream?.(null);
+    }
+    // Binary artwork message, types 8-11 = channels 0-3, byte 1 = flags:
+    //   announce (bit 1): [type][flags][timestamp:8 BE int64][total_size:4 BE uint32]
+    //   part (no bits):   [type][flags][data...]
+    //   cancel (bit 0):   [type][flags]
+    // The parts' data concatenated is the encoded image, complete at total_size bytes.
+    // Servers on aiosendspin <= 9.1.x (Music Assistant) send the older single-message form instead,
+    //   [type][timestamp:8 BE int64][image...] (header only = clear),
+    // whose byte 1 is the timestamp's top byte, always 0. A flags byte of 0 is a part, which is only
+    // valid while a transfer is in flight, so a 0 with none in flight is read as the older form.
+    // Malformed input is logged and dropped rather than closing the connection.
+    handleArtworkBinary(type, data) {
+        const channel = type - 8;
+        const bytes = new Uint8Array(data);
+        if (bytes.length < 2)
+            return;
+        const flags = bytes[1];
+        if (flags === 0 && !this.artworkTransfer && bytes.length >= 9) {
+            const timestampUs = Number(new DataView(data).getBigInt64(1));
+            const total = bytes.length - 9;
+            this.artworkTransfer = { channel, timestampUs, total, received: total, parts: total ? [bytes.slice(9)] : [] };
+            this.finishArtworkTransfer();
+            return;
+        }
+        if (flags & 0xfc || (flags & 3) === 3) {
+            console.warn("Sendspin: Malformed artwork message, flags", flags);
+            return;
+        }
+        if (flags & 1) {
+            if (this.artworkTransfer?.channel === channel)
+                this.artworkTransfer = null;
+            this.onArtworkCancel?.(channel);
+            return;
+        }
+        if (flags & 2) {
+            if (bytes.length !== 14) {
+                console.warn("Sendspin: Malformed artwork announce, length", bytes.length);
+                return;
+            }
+            const view = new DataView(data);
+            const timestampUs = Number(view.getBigInt64(2));
+            const total = view.getUint32(10);
+            this.artworkTransfer = { channel, timestampUs, total, received: 0, parts: [] };
+            if (total === 0)
+                this.finishArtworkTransfer();
+            return;
+        }
+        const t = this.artworkTransfer;
+        if (!t || t.channel !== channel || t.received + bytes.length - 2 > t.total) {
+            console.warn("Sendspin: Unexpected artwork part on channel", channel);
+            this.artworkTransfer = null;
+            return;
+        }
+        t.parts.push(bytes.slice(2));
+        t.received += bytes.length - 2;
+        if (t.received === t.total)
+            this.finishArtworkTransfer();
+    }
+    finishArtworkTransfer() {
+        const t = this.artworkTransfer;
+        this.artworkTransfer = null;
+        const format = this.artworkConfig?.channels[t.channel]?.format ?? "jpeg";
+        const image = t.total === 0
+            ? null
+            : new Blob(t.parts, { type: `image/${format}` });
+        this.onArtwork?.({ channel: t.channel, timestampUs: t.timestampUs, image });
     }
     handleVisualizerStreamStart(config) {
         console.log("Sendspin: Visualizer stream started", config);
@@ -6431,6 +6551,10 @@ class SendspinCore {
         const messageType = new Uint8Array(data, 0, 1)[0];
         if (messageType >= 16 && messageType <= 23) {
             this.handleVisualizerBinary(messageType, data);
+            return;
+        }
+        if (messageType >= 8 && messageType <= 11) {
+            this.handleArtworkBinary(messageType, data);
             return;
         }
         const format = this.stateManager.currentStreamFormat;
@@ -8320,6 +8444,12 @@ class SendspinPlayer {
         this.core.onVisualizerClear = config.onVisualizerClear ?? null;
         if (config.visualizer)
             this.core.setVisualizerRequest(config.visualizer);
+        // Artwork role
+        this.core.onArtwork = config.onArtwork ?? null;
+        this.core.onArtworkCancel = config.onArtworkCancel ?? null;
+        this.core.onArtworkStream = config.onArtworkStream ?? null;
+        if (config.artwork)
+            this.core.setArtworkRequest(config.artwork);
         this.core.onStreamStart = (format, isFormatUpdate) => {
             this.scheduler.initAudioContext();
             void this.scheduler.resumeAudioContext().catch((error) => {
@@ -8519,6 +8649,10 @@ class SendspinPlayer {
     /** Change what visualizer data is requested; takes effect on the next client/state. */
     setVisualizerRequest(request) {
         this.core.setVisualizerRequest(request);
+    }
+    /** Change the artwork request; takes effect on the next client/state. */
+    setArtworkRequest(request) {
+        this.core.setArtworkRequest(request);
     }
     getCurrentServerTimeUs() {
         return this.core.getCurrentServerTimeUs();
