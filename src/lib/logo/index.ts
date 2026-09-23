@@ -25,8 +25,6 @@ export interface LogoOptions {
   colorA?: string;
   background?: string;
   radius?: number;
-  /** Paper grain over the paths, 0 (off) .. 1; see setGrain(). */
-  grain?: number;
   maxFps?: number;
   joinMs?: number;
 }
@@ -73,9 +71,12 @@ export function mountLogo(container: HTMLElement, opts: LogoOptions = {}) {
   container.innerHTML = `
 <svg class="sendspin-logo" viewBox="0 0 128 128" fill="none" stroke-width="${STROKE}" xmlns="${NS}">
   <defs>
-    <filter id="${id}-art" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB"></filter>
+    <filter id="${id}-round" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feGaussianBlur class="round-blur" stdDeviation="0.8"/>
+      <feComponentTransfer><feFuncA type="linear" slope="12" intercept="-5.5"/></feComponentTransfer>
+    </filter>
   </defs>
-  <g class="pulse"><g class="art">
+  <g class="pulse"><g class="art" filter="url(#${id}-round)">
     <g class="half half-left">${segMarkup('left')}</g>
     <g class="half half-right">${segMarkup('right')}</g>
   </g></g>
@@ -213,7 +214,6 @@ export function mountLogo(container: HTMLElement, opts: LogoOptions = {}) {
     flash: 0,
     pulse: 0,
     radius: 0.8,
-    grain: 0,
     colorTau: 0.45,
     beat: { period: 0, nextAt: 0, anchor: 0, div: 1, markers: false, on: false, offsetMs: 0 },
   };
@@ -397,32 +397,6 @@ export function mountLogo(container: HTMLElement, opts: LogoOptions = {}) {
     (svg.querySelector('.overlay') as SVGGElement).appendChild(l);
   }
 
-  // ---------------------------------------------------------------- art filter
-  // One filter on the art group: the corner rounding (blur, then a hard alpha threshold) and the
-  // paper grain on top of it. Frequencies are in logo units (viewBox 128): the fine grain has
-  // features of about 0.3 units, around a pixel at typical sizes; the mottle about 8 units.
-  const filterEl = svg.querySelector(`#${id}-art`) as SVGFilterElement;
-  function buildFilter(): void {
-    const r = state.radius, g = state.grain;
-    let f = '';
-    if (r > 0) f += `<feGaussianBlur stdDeviation="${r}"/>
-      <feComponentTransfer><feFuncA type="linear" slope="12" intercept="-5.5"/></feComponentTransfer>`;
-    f += '<feOffset result="shape"/>';
-    if (g > 0) {
-      // Noise channels sit around 0.5; stretch the red one about 0.5 into a grey whose contrast is
-      // the grain strength, so 0.5 grey (no change under soft-light) is the zero point.
-      const c = (3 * g).toFixed(3), o = (0.5 - 1.5 * g).toFixed(3);
-      f += `<feTurbulence type="fractalNoise" baseFrequency="3.2" numOctaves="3" seed="7" stitchTiles="stitch" result="fine"/>
-      <feTurbulence type="fractalNoise" baseFrequency="0.12" numOctaves="2" seed="3" stitchTiles="stitch" result="mottle"/>
-      <feComposite in="fine" in2="mottle" operator="arithmetic" k2="0.7" k3="0.3"/>
-      <feColorMatrix type="matrix" values="${c} 0 0 0 ${o}  ${c} 0 0 0 ${o}  ${c} 0 0 0 ${o}  0 0 0 0 1"/>
-      <feComposite in2="shape" operator="in"/>
-      <feBlend in2="shape" mode="soft-light"/>`;
-    }
-    filterEl.innerHTML = f;
-    if (r > 0 || g > 0) art.setAttribute('filter', `url(#${id}-art)`); else art.removeAttribute('filter');
-  }
-
   // ---------------------------------------------------------------- frame loop
   let last = performance.now(), raf = 0;
   const minFrameMs = 1000 / (opts.maxFps ?? 60) - 1.5;
@@ -484,14 +458,8 @@ export function mountLogo(container: HTMLElement, opts: LogoOptions = {}) {
     setSpeed(v: number) { state.speed = Math.max(0, v); },
     setDash(d: number) { state.dash = Math.max(4, d); },
     setRandom(on: boolean) { state.random = on; },
-    /** Corner rounding blur radius; 0 removes it (and the filter, if grain is off too). */
-    setRadius(r: number) { state.radius = Math.max(0, r); buildFilter(); },
-    /**
-     * Paper grain over the paths: fine fractal noise plus a faint mottle, soft-light blended into
-     * each shape and clipped to it, so colours stay solid and the mark keeps its outline. The
-     * noise is fixed in logo space; dashes flow through it like ink over paper. 0 = off, 1 = strong.
-     */
-    setGrain(g: number) { state.grain = Math.min(1, Math.max(0, g)); buildFilter(); },
+    /** Corner rounding blur radius; 0 removes the filter entirely. */
+    setRadius(r: number) { state.radius = r; svg.querySelector('.round-blur')!.setAttribute('stdDeviation', String(r)); art.setAttribute('filter', r > 0 ? `url(#${id}-round)` : ''); },
     /** Colours handed out round-robin to shapes as they enter; one solid colour per shape. */
     setDashColors(list: string[]) { const l = list.filter(Boolean); if (l.length) state.dashColors = l; },
     setColors(a: string, b: string) { api.setDashColors([a, b]); },
@@ -546,7 +514,6 @@ export function mountLogo(container: HTMLElement, opts: LogoOptions = {}) {
     reset() { for (const c of MODES[state.mode].chains) resetChain(c); },
     destroy() { cancelAnimationFrame(raf); container.innerHTML = ''; },
   };
-  state.grain = Math.min(1, Math.max(0, opts.grain ?? 0));
   api.setRadius(opts.radius ?? 0.8);
   return api;
 }

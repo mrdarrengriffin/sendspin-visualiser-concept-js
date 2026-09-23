@@ -18,8 +18,6 @@ input('speed').addEventListener('input', (e) => logo.setSpeed(+(e.target as HTML
 input('dash').addEventListener('input', (e) => logo.setDash(+(e.target as HTMLInputElement).value));
 button('random').addEventListener('click', () => { random = !random; logo.setRandom(random); button('random').textContent = random ? 'Random: on' : 'Random: off'; });
 input('radius').addEventListener('input', (e) => logo.setRadius(+(e.target as HTMLInputElement).value));
-input('grain').addEventListener('input', (e) => logo.setGrain(+(e.target as HTMLInputElement).value));
-logo.setGrain(+input('grain').value);
 button('pulse').addEventListener('click', () => logo.pulse(1));
 button('flash').addEventListener('click', () => logo.flash(1));
 button('levels').addEventListener('click', () => logo.setLevels(Array.from({ length: 8 }, Math.random)));

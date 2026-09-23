@@ -33,8 +33,6 @@ what to drop, and what it costs.
 
 - The SVG filter for corner rounding. On a raster target, draw each dash as an arc segment with
   small round-ish end caps, or just butt caps.
-- The paper grain. On a raster target, a pre-rendered noise tile multiplied or soft-light
-  blended inside the dash shapes gives the same look; keep it fixed in screen space.
 - Per-shape colour easing, pulse, flash, spectrum brightness. Nice, not essential.
 - The join/offset transition. Static offset view is the logo.
 - The onset fallback. Prefer the server's beats; propose tempo in the protocol.
